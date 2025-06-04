@@ -1,0 +1,16 @@
+# Settings
+/.vscode
+
+# Large files
+/data
+
+# I/O (except examples)
+/outputs
+/input/*
+!/input/examples/
+!/input/examples/**
+
+# ROS / Catkin
+handover_pipeline_ws/build
+handover_pipeline_ws/devel
+**.catkin_workspace

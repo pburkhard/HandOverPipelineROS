@@ -1,0 +1,18 @@
+# ignore .git related folders
+.git/
+.github/
+.gitignore
+# ignore docs
+docs/
+# ignore logs
+**/logs/
+**/runs/
+**/output/*
+**/outputs/*
+**/videos/*
+*.tmp
+# ignore docker
+docker/.container.cfg
+# ignore __pycache__
+**/__pycache__/
+**/*.egg-info/

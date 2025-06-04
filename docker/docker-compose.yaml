@@ -1,0 +1,44 @@
+x-default-volumes: &default-volumes
+  - type: volume
+    source: handover_pipeline_ws
+    target: ${DOCKER_PROJECT_ROOT}/handover_pipeline_ws
+  # Needed for graphics suppport
+  - type: bind
+    source: /tmp/.X11-unix
+    target: /tmp/.X11-unix
+  - type: bind
+    source: ../handover_pipeline_ws
+    target: ${DOCKER_PROJECT_ROOT}/handover_pipeline_ws
+
+
+x-gpu-deploy: &gpu-deploy
+  resources:
+    reservations:
+      devices:
+        - driver: nvidia
+          count: all
+          capabilities: [ gpu ]
+
+services:
+  # This service is the base ros image, with the catkin workspace initialized.
+  base:
+    profiles: ["base"]
+    env_file: .env
+    build:
+      context: ../
+      dockerfile: docker/Dockerfile
+      args:
+        - PROJECT_ROOT_PATH=${DOCKER_PROJECT_ROOT}
+      target: base
+    image: handover-pipeline:base
+    container_name: handover-pipeline-base
+    environment:
+      - DISPLAY=${DISPLAY}
+      - QT_X11_NO_MITSHM=1
+    volumes: *default-volumes
+    network_mode: host
+    deploy: *gpu-deploy
+    # This is the entrypoint for the container
+    entrypoint: bash
+    stdin_open: true
+    tty: true  
