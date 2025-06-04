@@ -41,4 +41,16 @@ services:
     # This is the entrypoint for the container
     entrypoint: bash
     stdin_open: true
-    tty: true  
+    tty: true
+
+  full:
+    # This service extends the base service and installs all necessary python environments.
+    profiles: ["full"]
+    extends:
+      service: base
+    image: handover-pipeline:full
+    container_name: handover-pipeline-full
+    build:
+      target: full
+      args:
+        - CONDA_PATH=${CONDA_PATH}

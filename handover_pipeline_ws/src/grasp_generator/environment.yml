@@ -1,0 +1,14 @@
+name: grasp_generator
+channels:
+  - defaults
+dependencies:
+  - python=3.12
+  - pip
+  - pip:
+    - numpy
+    - omegaconf
+    - openai
+    - opencv-python
+    - requests
+    - rospkg
+    - catkin_pkg

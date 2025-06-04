@@ -1,7 +1,10 @@
+##############
+# Base Image #
+##############
+FROM nvidia/cuda:12.4.0-runtime-ubuntu20.04 AS base
+
 # Path to project root folder inside the container
 ARG PROJECT_ROOT_PATH
-
-FROM nvidia/cuda:12.4.0-runtime-ubuntu20.04 AS base
 
 # Set default RUN shell to bash
 SHELL ["/bin/bash", "-c"]
@@ -13,8 +16,6 @@ LABEL description="Dockerfile for building and running the ROS container image."
 # Set environment variables
 ENV LANG=C.UTF-8
 ENV DEBIAN_FRONTEND=noninteractive
-
-# USER root
 
 # Install dependencies and clean up apt cache
 RUN --mount=type=cache,target=/var/cache/apt \
@@ -45,6 +46,33 @@ COPY ../ ${PROJECT_ROOT_PATH}
 RUN echo 'if [ -f /handover_pipeline_ws/devel/setup.bash ]; then' >> ~/.bashrc && \
     echo '  source handover_pipeline_ws/devel/setup.bash' >> ~/.bashrc && \
     echo 'fi' >> ~/.bashrc
+
+##############
+# Full Image #
+##############
+FROM base AS full
+
+# Path to conda installation directory
+ARG CONDA_PATH=/opt/conda
+
+# Set environment variables for conda
+ENV CONDA_PATH=/opt/conda
+ENV PATH=$CONDA_PATH/bin:$PATH
+
+# Install further dependencies
+RUN apt-get update && apt-get install -y \
+wget \
+bzip2 \
+ca-certificates \
+curl \
+&& rm -rf /var/lib/apt/lists/*
+
+# Download and Install Miniconda
+RUN wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O /tmp/miniconda.sh \
+&& bash /tmp/miniconda.sh -b -p $CONDA_PATH \
+&& rm /tmp/miniconda.sh \
+&& conda clean -ay \
+&& conda init bash
 
 # make working directory as the project root
 # this is the default directory when the container is run
