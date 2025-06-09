@@ -1,0 +1,15 @@
+name: grasp_generator
+channels:
+  - defaults
+dependencies:
+  - python=3.8
+  - pip
+  - pip:
+    - catkin_pkg
+    - dotenv
+    - empy
+    - hydra-core
+    - numpy==1.19
+    - omegaconf
+    - opencv-python
+    - rospkg

@@ -1,0 +1,20 @@
+ros:
+  node_name: "handover_pipeline"  # Name of the ROS node
+  task_topic: "/task"  # Topic for the desciption of the intended task
+
+grasp_generator_client:
+  server_name: "grasp_generator"  # Name of the ROS service to call
+  ros:
+    timeout: 100  # Timeout for the service call in seconds
+
+debug:
+  # All output data will be saved in this directory.
+  out_dir: "/Handover_Pipeline/outputs/"
+  # Directory from which example data will be loaded.
+  example_dir: "/Handover_Pipeline/input/examples/01_bottle/"
+  # If true, the camera topic will not be subscribed to, and example data will be used instead.
+  bypass_camera_subscriber: true
+  # If true, the task topic will not be subscribed to, and example data will be used instead.
+  bypass_task_subscriber: true
+  # If true, the grasp generator will not be called, and example data will be used instead.
+  bypass_grasp_generator: true
