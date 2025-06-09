@@ -9,6 +9,15 @@ x-default-volumes: &default-volumes
   - type: bind
     source: ../handover_pipeline_ws
     target: ${DOCKER_PROJECT_ROOT}/handover_pipeline_ws
+  - type: bind
+    source: ../data
+    target: ${DOCKER_PROJECT_ROOT}/data
+  - type: bind
+    source: ../input
+    target: ${DOCKER_PROJECT_ROOT}/input
+  - type: bind
+    source: ../outputs
+    target: ${DOCKER_PROJECT_ROOT}/outputs
 
 
 x-gpu-deploy: &gpu-deploy

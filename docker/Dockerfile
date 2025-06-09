@@ -32,11 +32,11 @@ RUN --mount=type=cache,target=/var/cache/apt \
 RUN sh -c 'echo "deb http://packages.ros.org/ros/ubuntu focal main" > /etc/apt/sources.list.d/ros-latest.list'
 RUN apt-key adv --keyserver 'hkp://keyserver.ubuntu.com:80' --recv-key C1CF6E31E6BADE8868B172B4F42ED6FBAB17C654
 RUN apt-get update \
-&& apt-get install -y --no-install-recommends ros-noetic-desktop-full
+    && apt-get install -y --no-install-recommends ros-noetic-desktop-full
 RUN apt-get install -y --no-install-recommends python3-rosdep
 RUN rosdep init \
-&& rosdep fix-permissions \
-&& rosdep update
+    && rosdep fix-permissions \
+    && rosdep update
 RUN echo "source /opt/ros/noetic/setup.bash" >> ~/.bashrc
 
 # Copy the project directory (files to exclude are defined in .dockerignore)
@@ -61,18 +61,18 @@ ENV PATH=$CONDA_PATH/bin:$PATH
 
 # Install further dependencies
 RUN apt-get update && apt-get install -y \
-wget \
-bzip2 \
-ca-certificates \
-curl \
-&& rm -rf /var/lib/apt/lists/*
+    wget \
+    bzip2 \
+    ca-certificates \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
 
 # Download and Install Miniconda
 RUN wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O /tmp/miniconda.sh \
-&& bash /tmp/miniconda.sh -b -p $CONDA_PATH \
-&& rm /tmp/miniconda.sh \
-&& conda clean -ay \
-&& conda init bash
+    && bash /tmp/miniconda.sh -b -p $CONDA_PATH \
+    && rm /tmp/miniconda.sh \
+    && conda clean -ay \
+    && conda init bash
 
 # make working directory as the project root
 # this is the default directory when the container is run
