@@ -1,6 +1,6 @@
 <launch> 
     <arg name="pkg_path" value="$(find grasp_generator)"/>
-    <arg name="python_path" value="$(arg pkg_path)/src/grasp_generator.py"/>
+    <arg name="python_path" value="$(arg pkg_path)/src/grasp_generator_node.py"/>
     <arg name="conda_env" value="grasp_generator"/>
     
     <!-- Launch the node with updated conda environment activation -->

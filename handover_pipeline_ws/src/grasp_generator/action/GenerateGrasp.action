@@ -1,0 +1,12 @@
+# Goal
+sensor_msgs/Image object_image
+string object_description
+string task_description
+---
+# Result
+bool success
+sensor_msgs/Image grasp_image
+---
+# Feedback
+float32 percent_complete
+string status

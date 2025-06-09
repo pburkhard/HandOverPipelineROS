@@ -7,4 +7,5 @@ if conda env list | grep -q "grasp_generator"; then
     conda remove -n grasp_generator --all -y
 fi
 # Create a new conda environment
-conda env create -n grasp_generator -f environment.yml
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+conda env create -n grasp_generator -f ${SCRIPT_DIR}/environment.yml

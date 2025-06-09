@@ -5,10 +5,13 @@ dependencies:
   - python=3.12
   - pip
   - pip:
+    - catkin_pkg
+    - dotenv
+    - empy
+    - hydra-core
     - numpy
     - omegaconf
     - openai
     - opencv-python
     - requests
     - rospkg
-    - catkin_pkg
