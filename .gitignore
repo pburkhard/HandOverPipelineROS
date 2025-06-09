@@ -14,3 +14,10 @@
 handover_pipeline_ws/build
 handover_pipeline_ws/devel
 **.catkin_workspace
+
+# Python
+**__pycache__/
+
+# Environment (except docker)
+**.env
+!docker/.env
