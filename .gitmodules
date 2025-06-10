@@ -1,0 +1,3 @@
+[submodule "handover_pipeline_ws/src/correspondence_estimator/third-party/dino-vit-features"]
+	path = handover_pipeline_ws/src/correspondence_estimator/third-party/dino-vit-features
+	url = https://github.com/ShirAmir/dino-vit-features
