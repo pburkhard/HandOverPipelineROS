@@ -1,0 +1,27 @@
+name: correspondence_estimator
+channels:
+   - pytorch
+   - conda-forge
+   - anaconda
+dependencies:
+   - python=3.11
+   - pytorch
+   - torchvision
+   - torchaudio
+   - cudatoolkit=11
+   - tqdm
+   - faiss
+   - timm
+   - matplotlib
+   - scikit-learn
+   - pip
+   - pip:
+      - git+https://github.com/lucasb-eyer/pydensecrf.git
+      - git+https://github.com/luca-medeiros/lang-segment-anything.git
+      - catkin_pkg
+      - dotenv
+      - empy
+      - hydra-core
+      - omegaconf
+      - opencv-python
+      - rospkg

@@ -10,7 +10,11 @@ project(correspondence_estimator)
 find_package(catkin REQUIRED COMPONENTS
   roscpp
   rospy
+  actionlib
+  actionlib_msgs
+  sensor_msgs
   std_msgs
+  message_generation
 )
 
 ## System dependencies are found with CMake's conventions
@@ -61,17 +65,19 @@ find_package(catkin REQUIRED COMPONENTS
 # )
 
 ## Generate actions in the 'action' folder
-# add_action_files(
-#   FILES
-#   Action1.action
-#   Action2.action
-# )
+add_action_files(
+  FILES
+  EstimateCorrespondence.action
+  # other action files can be added here
+)
 
 ## Generate added messages and services with any dependencies listed here
-# generate_messages(
-#   DEPENDENCIES
-#   std_msgs
-# )
+generate_messages(
+  DEPENDENCIES
+  actionlib_msgs
+  std_msgs  
+  sensor_msgs
+)
 
 ################################################
 ## Declare ROS dynamic reconfigure parameters ##
@@ -160,7 +166,7 @@ include_directories(
 ## Mark executable scripts (Python etc.) for installation
 ## in contrast to setup.py, you can choose the destination
 catkin_install_python(PROGRAMS
-  src/correspondence_estimator.py
+  src/correspondence_estimator_node.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 

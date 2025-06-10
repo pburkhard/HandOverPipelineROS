@@ -1,0 +1,12 @@
+<launch> 
+    <arg name="pkg_path" value="$(find correspondence_estimator)"/>
+    <arg name="python_path" value="$(arg pkg_path)/src/correspondence_estimator_node.py"/>
+    <arg name="conda_env" value="correspondence_estimator"/>
+    
+    <!-- Launch the node with updated conda environment activation -->
+    <node name="correspondence_estimator" pkg="correspondence_estimator" type="activate_conda_env.sh" 
+                args="$(arg conda_env) $(arg python_path)" output="screen" respawn="false">
+        <param name="example_param" value="example_value"/>
+        <env name="CONDA_PATH" value="$(env CONDA_PATH)" />
+    </node>
+</launch>

@@ -1,0 +1,18 @@
+ros:
+  node_name: "correspondence_estimator"  # Name of the ROS node
+
+num_correspondences: 10  # number of correspondences to sample
+target_image_size: 224  # Resize the smallest side of the image to this size
+extraction_layer: 9  # layer of the model to use for feature extraction
+extraction_facet: "key"  # facet to extract features from
+use_binned_descriptor: True  # wether to use log-binning descriptor
+saliency_threshold: 0.05  # threshold of saliency maps to distinguish fg and bg
+model_type: "dino_vits8"  # model type to use for feature extraction
+model_stride: 4  # stride of the model
+preprocess_images: True  # whether to preprocess images before feature extraction
+
+debug:
+  out_dir: "/Handover_Pipeline/outputs/"
+  log_unprocessed_images: True  # log the unprocessed images
+  log_correspondences: True  # log the correspondence points found
+  log_visualization: True  # log visualization of the correspondence estimation
