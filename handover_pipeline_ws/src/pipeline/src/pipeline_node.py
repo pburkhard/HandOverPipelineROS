@@ -5,16 +5,92 @@ from dotenv import load_dotenv
 import cv2
 from cv_bridge import CvBridge
 from hydra import initialize, compose
+import numpy as np
 from omegaconf import DictConfig
 import os
 import rospy
 from sensor_msgs.msg import Image
-from std_msgs.msg import String
+from std_msgs.msg import String, Int32MultiArray
 
 from grasp_generator.msg import (
     GenerateGraspAction,
     GenerateGraspGoal,
 )
+
+from correspondence_estimator.msg import (
+    EstimateCorrespondenceAction,
+    EstimateCorrespondenceGoal,
+)
+
+
+class CorrespondenceEstimationClient:
+    def __init__(self, cfg: DictConfig):
+        self.cfg = cfg
+
+        self._action_client = actionlib.SimpleActionClient(
+            self.cfg.server_name, EstimateCorrespondenceAction
+        )
+        self._cv_bridge = CvBridge()
+        rospy.loginfo(f"Waiting for action server {self.cfg.server_name}...")
+        self._action_client.wait_for_server()
+        rospy.loginfo(f"Action server {self.cfg.server_name} is up.")
+
+    def estimate_correspondence(
+        self, object_image: Image, grasp_image: Image, object_description: String
+    ):
+        """
+        Estimate correspondence points between the object image and the grasp image.
+        Args:
+            object_image: The image of the object to grasp.
+            grasp_image: The image of the generated grasp.
+            object_description: Description of the object.
+        Returns:
+            A tuple of two lists containing the correspondence points in the object image
+            and the grasp image, respectively (in this order).
+        """
+        rospy.loginfo("Estimating correspondence...")
+        self._send_goal(
+            image_1=object_image,
+            image_2=grasp_image,
+            object_description=object_description,
+        )
+
+        self._action_client.wait_for_result(rospy.Duration(self.cfg.ros.timeout))
+        result = self._action_client.get_result()
+
+        if result is None:
+            rospy.logerr("No result received from the action server.")
+            return None
+
+        rospy.loginfo("Correspondence estimated successfully.")
+        return result.points_1, result.points_2
+
+    def _send_goal(self, image_1: Image, image_2: Image, object_description: String):
+        goal_msg = EstimateCorrespondenceGoal()
+        goal_msg.image_1 = image_1
+        goal_msg.image_2 = image_2
+        goal_msg.object_description = object_description.data
+
+        rospy.loginfo(
+            f"Sending goal with object description: '{goal_msg.object_description}'."
+        )
+        self._action_client.send_goal(
+            goal_msg,
+            done_cb=self._done_callback,
+            active_cb=self._active_callback,
+            feedback_cb=self._feedback_callback,
+        )
+
+    def _active_callback(self):
+        rospy.loginfo("Correspondence goal just went active.")
+
+    def _feedback_callback(self, feedback):
+        rospy.loginfo(f"Received feedback: {feedback.status}")
+
+    def _done_callback(self, status, result):
+        rospy.loginfo(
+            f"Action done. Status: {status}, success: {getattr(result, 'success', None)}"
+        )
 
 
 class GraspGenerationClient:
@@ -105,14 +181,22 @@ class Pipeline:
     task_description: String = None
     # Image of the generated grasp
     grasp_image: Image = None
+    # Correspondence points in the object image
+    corr_points_object: Int32MultiArray = None
+    # Correspondence points in the grasp image
+    corr_points_grasp: Int32MultiArray = None
 
     task_topic_subscriber: rospy.Subscriber = None
     camera_topic_subscriber: rospy.Subscriber = None
     grasp_generation_client: GraspGenerationClient = None
+    correspondence_estimation_client: CorrespondenceEstimationClient = None
 
     def __init__(self, cfg: DictConfig):
         self.cfg = cfg
         self._cv_bridge = CvBridge()
+
+        # Create output directory with a timestamp and pass it to other components
+        self.out_dir = self._create_output_directory(self.cfg.debug.out_dir)
 
         rospy.init_node(self.cfg.ros.node_name, anonymous=True)
 
@@ -139,7 +223,13 @@ class Pipeline:
         # Setup the grasp generation client
         if not self.cfg.debug.bypass_grasp_generator:
             self.grasp_generation_client = GraspGenerationClient(
-                cfg.grasp_generator_client
+                self.cfg.grasp_generator_client
+            )
+
+        # Setup the correspondence estimation client
+        if not self.cfg.debug.bypass_correspondence_estimator:
+            self.correspondence_estimation_client = CorrespondenceEstimationClient(
+                self.cfg.correspondence_estimator_client
             )
 
     def run(self):
@@ -188,25 +278,72 @@ class Pipeline:
             )
             rospy.loginfo("Grasp image generation completed.")
 
+        # Estimate correspondence
+        if self.cfg.debug.bypass_correspondence_estimator:
+            rospy.loginfo("Bypassing correspondence estimator. Using example data.")
+            object_points_path = os.path.join(
+                self.cfg.debug.example_dir, "corr_points_object.npy"
+            )
+            grasp_points_path = os.path.join(
+                self.cfg.debug.example_dir, "corr_points_grasp.npy"
+            )
+            self.corr_points_object = Int32MultiArray(
+                data=np.load(object_points_path).flatten().tolist()
+            )
+            self.corr_points_grasp = Int32MultiArray(
+                data=np.load(grasp_points_path).flatten().tolist()
+            )
+        else:
+            rospy.loginfo("Estimating correspondence...")
+            self.corr_points_object, self.corr_points_grasp = (
+                self.correspondence_estimation_client.estimate_correspondence(
+                    object_image=self.object_image,
+                    grasp_image=self.grasp_image,
+                    object_description=self.object_description,
+                )
+            )
+            rospy.loginfo("Correspondence estimation completed.")
         # TODO: Extend the pipeline
-        self.dump_results(self.cfg.debug.out_dir)
+        self.dump_results()
 
-    def dump_results(self, out_dir: str):
+    #########################
+    ### Utility Functions ###
+    #########################
+
+    def _create_output_directory(self, base_dir: str) -> str:
         """
-        Save the results of the pipeline to the specified output directory.
+        Create an output directory with the current timestamp as name inside the given base dir.
+        If the directory already exists, a new one will be created with a different timestamp.
+
         Args:
-            out_dir (str): The directory where the results will be saved.
+            base_dir (str): The base directory where the output directory will be created.
+        Returns:
+            str: The path to the created output directory.
         """
 
-        # Create a folder with the current timestamp
-        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        out_dir = os.path.join(out_dir, timestamp)
-        if not os.path.exists(out_dir):
-            os.makedirs(out_dir)
-        rospy.loginfo(f"Dumping results to {out_dir}.")
+        while True:
+            timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            out_dir = os.path.join(self.cfg.debug.out_dir, timestamp)
+            if not os.path.exists(out_dir):
+                os.makedirs(out_dir)
+                rospy.loginfo(f"Output directory created: {out_dir}")
+                return out_dir
+            rospy.logwarn(
+                f"Output directory {out_dir} already exists. "
+                "Creating a new directory with a different timestamp."
+            )
+            rospy.sleep(1)  # Wait for a second before trying again
+
+    def dump_results(self):
+        """
+        Save the results of the pipeline to the output directory specified in the configuration.
+
+        """
+
+        rospy.loginfo(f"Dumping results to {self.out_dir}.")
 
         # Save all string variables to a text file
-        with open(os.path.join(out_dir, "task.txt"), "w") as f:
+        with open(os.path.join(self.out_dir, "task.txt"), "w") as f:
             obj_desc = (
                 self.object_description.data
                 if self.object_description is not None
@@ -222,7 +359,7 @@ class Pipeline:
 
         # Save the object image if available
         if self.object_image is not None:
-            object_image_path = os.path.join(out_dir, "object_image.png")
+            object_image_path = os.path.join(self.out_dir, "object_image.png")
             cv2.imwrite(
                 object_image_path, self._cv_bridge.imgmsg_to_cv2(self.object_image)
             )
@@ -231,14 +368,31 @@ class Pipeline:
 
         # Save the grasp image if available
         if self.grasp_image is not None:
-            grasp_image_path = os.path.join(out_dir, "grasp_image.png")
+            grasp_image_path = os.path.join(self.out_dir, "grasp_image.png")
             cv2.imwrite(
                 grasp_image_path, self._cv_bridge.imgmsg_to_cv2(self.grasp_image)
             )
         else:
             rospy.logwarn("No grasp image to save.")
 
+        # Save the correspondence points if available
+        if self.corr_points_object is not None and self.corr_points_grasp is not None:
+            np.save(
+                os.path.join(self.out_dir, "object_points.npy"),
+                np.array(self.corr_points_object.data).reshape(-1, 2),
+            )
+            np.save(
+                os.path.join(self.out_dir, "grasp_points.npy"),
+                np.array(self.corr_points_grasp.data).reshape(-1, 2),
+            )
+        else:
+            rospy.logwarn("No correspondence points to save.")
+
         rospy.loginfo(f"All results saved")
+
+    #####################
+    ### ROS Callbacks ###
+    #####################
 
     def _task_callback(self, msg):
         """

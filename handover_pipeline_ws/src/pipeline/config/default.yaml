@@ -7,6 +7,11 @@ grasp_generator_client:
   ros:
     timeout: 100  # Timeout for the service call in seconds
 
+correspondence_estimator_client:
+  server_name: "correspondence_estimator"  # Name of the ROS service to call
+  ros:
+    timeout: 100  # Timeout for the service call in seconds
+
 debug:
   # All output data will be saved in this directory.
   out_dir: "/Handover_Pipeline/outputs/"
@@ -18,3 +23,5 @@ debug:
   bypass_task_subscriber: true
   # If true, the grasp generator will not be called, and example data will be used instead.
   bypass_grasp_generator: true
+  # If true, the correspondence estimator will not be called, and example data will be used instead.
+  bypass_correspondence_estimator: true
