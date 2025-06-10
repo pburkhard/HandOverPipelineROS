@@ -18,6 +18,7 @@ from grasp_generator.msg import (
     GenerateGraspFeedback,
     GenerateGraspGoal,
 )
+from std_msgs.msg import String
 from sensor_msgs.msg import Image
 
 # Absolute path to the root directory of the package
@@ -41,6 +42,29 @@ class GraspGenerator:
             execute_cb=self._execute,
             auto_start=False,
         )
+
+        # Set the output directory
+        self.out_dir = None
+        if self.cfg.debug.out_dir_mode == "fixed":
+            self.out_dir = self.cfg.debug.out_dir_fixed
+        elif self.cfg.debug.out_dir_mode == "topic":
+            self._out_dir_sub = rospy.Subscriber(
+                self.cfg.debug.out_dir_topic,
+                String,
+                self._out_dir_callback,
+                queue_size=1,
+            )
+            while self.out_dir is None and not rospy.is_shutdown():
+                rospy.loginfo(
+                    "Waiting for output directory to be set via topic: "
+                    + f"{self.cfg.debug.out_dir_topic}"
+                )
+                rospy.sleep(1.0)
+        else:
+            rospy.logerr(
+                "Invalid out_dir_mode. Supported modes are 'fixed' and 'topic'."
+            )
+
         self._server.start()
         rospy.loginfo(f"{self.cfg.ros.node_name} action server started.")
 
@@ -148,7 +172,7 @@ class GraspGenerator:
         """
 
         if self.cfg.debug.log_generation_prompt:
-            path = os.path.join(self.cfg.debug.out_dir, "generation_prompt.txt")
+            path = os.path.join(self.out_dir, "generation_prompt.txt")
             with open(path, "w") as f:
                 f.write(prompt)
 
@@ -184,7 +208,7 @@ class GraspGenerator:
 
         # Log the description prompt if enabled
         if self.cfg.debug.log_description_prompt:
-            path = os.path.join(self.cfg.debug.out_dir, "description_prompt.txt")
+            path = os.path.join(self.out_dir, "description_prompt.txt")
             with open(path, "w") as f:
                 f.write(self.cfg.descriptor.prompt)
 
@@ -209,6 +233,17 @@ class GraspGenerator:
 
         # Return the description
         return response.choices[0].message.content
+
+    def _out_dir_callback(self, msg: String):
+        """
+        Callback function for the output directory topic subscriber.
+        Sets the output directory based on the received message.
+        Args:
+            msg (String): The message containing the output directory path.
+        """
+        if self.out_dir != msg.data:
+            self.out_dir = msg.data
+            rospy.loginfo(f"Output directory set to: {self.out_dir}")
 
 
 if __name__ == "__main__":

@@ -47,6 +47,29 @@ class CorrespondenceEstimator:
             execute_cb=self._execute,
             auto_start=False,
         )
+
+        # Set the output directory
+        self.out_dir = None
+        if self.cfg.debug.out_dir_mode == "fixed":
+            self.out_dir = self.cfg.debug.out_dir_fixed
+        elif self.cfg.debug.out_dir_mode == "topic":
+            self._out_dir_sub = rospy.Subscriber(
+                self.cfg.debug.out_dir_topic,
+                String,
+                self._out_dir_callback,
+                queue_size=1,
+            )
+            while self.out_dir is None and not rospy.is_shutdown():
+                rospy.loginfo(
+                    "Waiting for output directory to be set via topic: "
+                    + f"{self.cfg.debug.out_dir_topic}"
+                )
+                rospy.sleep(1.0)
+        else:
+            rospy.logerr(
+                "Invalid out_dir_mode. Supported modes are 'fixed' and 'topic'."
+            )
+
         self._server.start()
         rospy.loginfo(f"{cfg.ros.node_name} action server started.")
 
@@ -84,8 +107,8 @@ class CorrespondenceEstimator:
             )
 
             # Save the images using OpenCV
-            path_1 = os.path.join(self.cfg.debug.out_dir, "image_1_unpreprocessed.png")
-            path_2 = os.path.join(self.cfg.debug.out_dir, "image_2_unpreprocessed.png")
+            path_1 = os.path.join(self.out_dir, "image_1_unpreprocessed.png")
+            path_2 = os.path.join(self.out_dir, "image_2_unpreprocessed.png")
             cv2.imwrite(path_1, img1_data)
             cv2.imwrite(path_2, img2_data)
 
@@ -119,8 +142,8 @@ class CorrespondenceEstimator:
         )
 
         # Save the images as required by the find_correspondences function
-        image_path1 = os.path.join(self.cfg.debug.out_dir, "image_1.png")
-        image_path2 = os.path.join(self.cfg.debug.out_dir, "image_2.png")
+        image_path1 = os.path.join(self.out_dir, "image_1.png")
+        image_path2 = os.path.join(self.out_dir, "image_2.png")
         cv2.imwrite(image_path1, img1_data)
         cv2.imwrite(image_path2, img2_data)
 
@@ -359,6 +382,17 @@ class CorrespondenceEstimator:
         )
         fig.savefig(output_path)
         plt.close(fig)
+
+    def _out_dir_callback(self, msg: String):
+        """
+        Callback function for the output directory topic subscriber.
+        Sets the output directory based on the received message.
+        Args:
+            msg (String): The message containing the output directory path.
+        """
+        if self.out_dir != msg.data:
+            self.out_dir = msg.data
+            rospy.loginfo(f"Output directory set to: {self.out_dir}")
 
 
 if __name__ == "__main__":

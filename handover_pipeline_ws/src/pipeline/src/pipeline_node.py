@@ -186,6 +186,10 @@ class Pipeline:
     # Correspondence points in the grasp image
     corr_points_grasp: Int32MultiArray = None
 
+    # This publisher tells the other nodes where to save the output files
+    out_dir_publisher: rospy.Publisher = None
+
+    # Subscribers and clients
     task_topic_subscriber: rospy.Subscriber = None
     camera_topic_subscriber: rospy.Subscriber = None
     grasp_generation_client: GraspGenerationClient = None
@@ -199,6 +203,17 @@ class Pipeline:
         self.out_dir = self._create_output_directory(self.cfg.debug.out_dir)
 
         rospy.init_node(self.cfg.ros.node_name, anonymous=True)
+
+        # Setup the log directory publisher
+        self.out_dir_publisher = rospy.Publisher(
+            self.cfg.ros.out_dir_topic,
+            String,
+            queue_size=1,
+        )
+
+        # Publish the output directory immediately and then every 10 seconds
+        self._publish_out_dir(None)
+        rospy.Timer(rospy.Duration(1), self._publish_out_dir)
 
         # Setup the task topic subscriber
         if not self.cfg.debug.bypass_task_subscriber:
@@ -393,6 +408,17 @@ class Pipeline:
     #####################
     ### ROS Callbacks ###
     #####################
+
+    def _publish_out_dir(self, event):
+        """
+        Publish the output directory to the out_dir topic.
+        This is used by other nodes to know where to save their output files.
+        """
+        try:
+            self.out_dir_publisher.publish(String(self.out_dir))
+            # rospy.loginfo(f"Published output directory: {self.out_dir}")
+        except Exception as e:
+            rospy.logerr(f"Failed to publish output directory: {e}")
 
     def _task_callback(self, msg):
         """

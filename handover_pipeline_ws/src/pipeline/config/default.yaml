@@ -1,6 +1,7 @@
 ros:
   node_name: "handover_pipeline"  # Name of the ROS node
   task_topic: "/task"  # Topic for the desciption of the intended task
+  out_dir_topic: "/out_dir"  # Topic for the output directory of the pipeline
 
 grasp_generator_client:
   server_name: "grasp_generator"  # Name of the ROS service to call

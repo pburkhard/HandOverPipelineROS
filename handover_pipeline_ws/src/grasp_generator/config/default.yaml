@@ -13,6 +13,10 @@ generator:
   background_prompt: "The background is a simple uniform wall."
 
 debug:
-  out_dir: "/Handover_Pipeline/outputs/"
+  # All output data will be saved to the output directory.
+  # The directory can be set to a fixed path or dynamically set via the out_dir_topic.
+  out_dir_mode: "topic"  # Options: "fixed", "topic"
+  out_dir_topic: "/out_dir"  # Topic to set the output directory dynamically (if out_dir_mode is "topic")
+  out_dir_fixed: "/Handover_Pipeline/outputs/" # Fixed output directory path (if out_dir_mode is "fixed")
   log_description_prompt: True  # log prompt used for object description
   log_generation_prompt: True  # log prompt used for image generation

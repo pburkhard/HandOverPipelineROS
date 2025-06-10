@@ -12,7 +12,11 @@ model_stride: 4  # stride of the model
 preprocess_images: True  # whether to preprocess images before feature extraction
 
 debug:
-  out_dir: "/Handover_Pipeline/outputs/"
+  # All output data will be saved to the output directory.
+  # The directory can be set to a fixed path or dynamically set via the out_dir_topic.
+  out_dir_mode: "topic"  # Options: "fixed", "topic"
+  out_dir_topic: "/out_dir"  # Topic to set the output directory dynamically (if out_dir_mode is "topic")
+  out_dir_fixed: "/Handover_Pipeline/outputs/" # Fixed output directory path (if out_dir_mode is "fixed")
   log_unprocessed_images: True  # log the unprocessed images
   log_correspondences: True  # log the correspondence points found
   log_visualization: True  # log visualization of the correspondence estimation
