@@ -1,15 +1,5 @@
 #!/usr/bin/env python
 import actionlib
-import rospy
-
-from grasp_generator.msg import (
-    GenerateGraspAction,
-    GenerateGraspResult,
-    GenerateGraspFeedback,
-    GenerateGraspGoal,
-)
-from sensor_msgs.msg import Image
-
 import base64
 import cv2
 from dotenv import load_dotenv
@@ -20,6 +10,15 @@ from openai import OpenAI
 from openai.types.images_response import ImagesResponse
 import os
 import requests
+import rospy
+
+from grasp_generator.msg import (
+    GenerateGraspAction,
+    GenerateGraspResult,
+    GenerateGraspFeedback,
+    GenerateGraspGoal,
+)
+from sensor_msgs.msg import Image
 
 # Absolute path to the root directory of the package
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -66,7 +65,6 @@ class GraspGenerator:
                 "Invalid goal: image_path, object_type, and task_description are required."
             )
             self._result.success = False
-            self._result.error_message = "Invalid goal parameters."
             self._server.set_aborted(self._result)
             return
         object_image = goal.object_image
@@ -149,6 +147,11 @@ class GraspGenerator:
             sensor_msgs.Image: The generated image as a ROS sensor_msgs/Image.
         """
 
+        if self.cfg.debug.log_generation_prompt:
+            path = os.path.join(self.cfg.debug.out_dir, "generation_prompt.txt")
+            with open(path, "w") as f:
+                f.write(prompt)
+
         # Make API request
         response = self._api_client.images.generate(
             prompt=prompt,
@@ -178,6 +181,12 @@ class GraspGenerator:
         _, buffer = cv2.imencode(".png", cv_image)
         # Convert to base64 string
         image = base64.b64encode(buffer).decode("utf-8")
+
+        # Log the description prompt if enabled
+        if self.cfg.debug.log_description_prompt:
+            path = os.path.join(self.cfg.debug.out_dir, "description_prompt.txt")
+            with open(path, "w") as f:
+                f.write(self.cfg.descriptor.prompt)
 
         # Make API request
         response = self._api_client.chat.completions.create(

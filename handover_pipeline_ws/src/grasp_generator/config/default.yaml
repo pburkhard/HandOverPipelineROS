@@ -1,8 +1,5 @@
 ros:
   node_name: "grasp_generator"  # Name of the ROS node
-  image_topic: "/camera/aligned_depth_to_color/image_raw"  # Topic for the input image
-  object_topic: "/hp/object_description"  # Topic for the object description
-  task_topic: "/hp/grasp_task"  # Topic for the desciption of the intended task
 
 descriptor:
   model: "gpt-4o"
@@ -14,3 +11,8 @@ generator:
   size: "1024x1024" # Output image size (width x height), possible values: "1024x1024", "1024x1792", "1792x1024"
   style: "natural"  # "vivid" or "natural" (only available for DALL-E 3)
   background_prompt: "The background is a simple uniform wall."
+
+debug:
+  out_dir: "/Handover_Pipeline/outputs/"
+  log_description_prompt: True  # log prompt used for object description
+  log_generation_prompt: True  # log prompt used for image generation
