@@ -1,0 +1,14 @@
+# Goal
+sensor_msgs/CameraInfo object_camera_info  # Camera info for the object image
+sensor_msgs/CameraInfo grasp_camera_info  # Camera info for the grasp image
+sensor_msgs/Image object_image_depth  # Depth image of the object
+std_msgs/Int32MultiArray corr_points_object  # Corresponding points in the object image, shape (N,2)
+std_msgs/Int32MultiArray corr_points_grasp  # Corresponding points in the grasp image, shape (N,2)
+---
+# Result
+bool success
+geometry_msgs/Transform transform_grasp_to_object  # Transform from grasp to object frame
+---
+# Feedback
+float32 percent_complete
+string status

@@ -1,36 +1,7 @@
 import numpy as np
-import tf.transformations
-
-from geometry_msgs.msg import Transform
-from sensor_msgs.msg import Image
 from std_msgs.msg import Int32MultiArray, MultiArrayDimension
-
-
-def cv2_to_imgmsg(image, encoding="bgr8"):
-    """
-    Convert a cv2 image to a ROS Image message.
-    Args:
-        image: The cv2 image to convert.
-        encoding: The encoding of the image (default is "bgr8").
-    Returns:
-        A ROS Image message.
-    """
-
-    msg = Image()
-    msg.height = image.shape[0]
-    msg.width = image.shape[1]
-    msg.encoding = encoding
-    msg.is_bigendian = (
-        1
-        if (
-            image.dtype.byteorder == ">"
-            or (image.dtype.byteorder == "=" and np.byteorder == "big")
-        )
-        else 0
-    )
-    msg.step = image.strides[0]
-    msg.data = image.tobytes()
-    return msg
+from geometry_msgs.msg import Transform
+import tf.transformations
 
 
 def imgmsg_to_cv2(image_msg):
@@ -58,11 +29,10 @@ def imgmsg_to_cv2(image_msg):
         return img[..., ::-1]
     elif image_msg.encoding == "mono8":
         dtype = np.uint8
-        channels = 1
         img = np.frombuffer(image_msg.data, dtype=dtype).reshape(
-            (image_msg.height, image_msg.width, channels)
+            (image_msg.height, image_msg.width)
         )
-        return img.squeeze()
+        return img
     else:
         raise ValueError(f"Unsupported encoding: {image_msg.encoding}")
 
@@ -84,7 +54,6 @@ def np_to_multiarraymsg(
 
     if array_type == Int32MultiArray:
         msg = Int32MultiArray()
-        msg.data = np_array.astype(np.int32).flatten().tolist()
     else:
         raise ValueError("Unsupported array type")
 
@@ -109,6 +78,21 @@ def np_to_multiarraymsg(
         )
 
     return msg
+
+
+def multiarraymsg_to_np(multiarray_msg):
+    """
+    Convert a ROS multiarray message to a numpy array.
+
+    Args:
+        multiarray_msg: The ROS multiarray message to convert.
+
+    Returns:
+        np.ndarray: The numpy array containing the data from the multiarray message.
+    """
+    return np.array(multiarray_msg.data).reshape(
+        [dim.size for dim in multiarray_msg.layout.dim]
+    )
 
 
 def np_to_transformmsg(np_array: np.ndarray):
@@ -139,36 +123,3 @@ def np_to_transformmsg(np_array: np.ndarray):
     transform_msg.rotation.w = quaternion[3]
 
     return transform_msg
-
-
-def transformmsg_to_np(transform_msg: Transform):
-    """
-    Convert a ROS Transform message to a numpy array.
-
-    Args:
-        transform_msg (Transform): The ROS Transform message to convert.
-
-    Returns:
-        np.ndarray: A numpy array of shape (4, 4) representing the transformation matrix.
-    """
-    translation = np.array(
-        [
-            transform_msg.translation.x,
-            transform_msg.translation.y,
-            transform_msg.translation.z,
-        ]
-    )
-
-    quaternion = np.array(
-        [
-            transform_msg.rotation.x,
-            transform_msg.rotation.y,
-            transform_msg.rotation.z,
-            transform_msg.rotation.w,
-        ]
-    )
-
-    rotation_matrix = tf.transformations.quaternion_matrix(quaternion)
-    rotation_matrix[:3, 3] = translation
-
-    return rotation_matrix

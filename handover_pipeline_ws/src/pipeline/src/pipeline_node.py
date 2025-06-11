@@ -10,15 +10,29 @@ import rospy
 
 from correspondence_estimation_client import CorrespondenceEstimationClient
 from grasp_generation_client import GraspGenerationClient
-from utils import cv2_to_imgmsg, imgmsg_to_cv2
+from transform_estimation_client import TransformEstimationClient
+from utils import (
+    cv2_to_imgmsg,
+    imgmsg_to_cv2,
+    np_to_transformmsg,
+    transformmsg_to_np,
+    np_to_multiarraymsg,
+)
 
-from sensor_msgs.msg import Image
+from geometry_msgs.msg import Transform
+from sensor_msgs.msg import Image, CameraInfo
 from std_msgs.msg import String, Int32MultiArray
 
 
 class Pipeline:
+    # Camera info for the object image
+    object_camera_info: CameraInfo = None
+    # Camera info for the grasp image
+    grasp_camera_info: CameraInfo = None
     # Image of the target object
     object_image: Image = None
+    # Depth imag of the target object
+    object_image_depth: Image = None
     # Description of the target object
     object_description: String = None
     # Description of the task to be performed with the object
@@ -29,6 +43,8 @@ class Pipeline:
     corr_points_object: Int32MultiArray = None
     # Correspondence points in the grasp image
     corr_points_grasp: Int32MultiArray = None
+    # Transform from the grasp image to the object image
+    transform_grasp_to_object: Transform = None
 
     # This publisher tells the other nodes where to save the output files
     out_dir_publisher: rospy.Publisher = None
@@ -38,6 +54,7 @@ class Pipeline:
     camera_topic_subscriber: rospy.Subscriber = None
     grasp_generation_client: GraspGenerationClient = None
     correspondence_estimation_client: CorrespondenceEstimationClient = None
+    transform_estimation_client: TransformEstimationClient = None
 
     def __init__(self, cfg: DictConfig):
         self.cfg = cfg
@@ -90,7 +107,20 @@ class Pipeline:
                 self.cfg.correspondence_estimator_client
             )
 
+        # Setup the transform estimation client
+        if not self.cfg.debug.bypass_transform_estimator:
+            self.transform_estimation_client = TransformEstimationClient(
+                self.cfg.transform_estimator_client
+            )
+
     def run(self):
+        # Run the initialization step to get the transform hand->gripper
+        self.initialization_step()
+
+        # Enter the main loop
+        self.main_loop()
+
+    def initialization_step(self):
 
         # Get the task description data
         if self.cfg.debug.bypass_task_subscriber:
@@ -110,9 +140,19 @@ class Pipeline:
         # Get the object image data
         if self.cfg.debug.bypass_camera_subscriber:
             rospy.loginfo("Bypassing camera subscriber. Using example image.")
+            # Camera info
+            path = os.path.join(self.cfg.debug.example_dir, "K_object.npy")
+            K_object = np.load(path)
+            self.object_camera_info = CameraInfo()
+            self.object_camera_info.K = K_object.flatten().tolist()
+            # RGB image
             path = os.path.join(self.cfg.debug.example_dir, "object_image.png")
             image = cv2.imread(path)
             self.object_image = cv2_to_imgmsg(image, encoding="bgr8")
+            # Depth image
+            path = os.path.join(self.cfg.debug.example_dir, "object_image_depth.png")
+            image = cv2.imread(path, cv2.IMREAD_UNCHANGED)
+            self.object_image_depth = cv2_to_imgmsg(image, encoding="mono8")
         else:
             while self.object_image is None:
                 rospy.loginfo("Waiting for object image from camera topic...")
@@ -122,8 +162,8 @@ class Pipeline:
         # Generate the grasp image
         if self.cfg.debug.bypass_grasp_generator:
             rospy.loginfo("Bypassing grasp generator. Using example image.")
-            path = os.path.join(self.cfg.debug.example_dir, "grasp_image.png")
-            grasp_image = cv2.imread(path)
+            rgb_path = os.path.join(self.cfg.debug.example_dir, "grasp_image.png")
+            grasp_image = cv2.imread(rgb_path)
             self.grasp_image = cv2_to_imgmsg(grasp_image, encoding="bgr8")
         else:
             rospy.loginfo("Generating grasp image...")
@@ -137,18 +177,14 @@ class Pipeline:
         # Estimate correspondence
         if self.cfg.debug.bypass_correspondence_estimator:
             rospy.loginfo("Bypassing correspondence estimator. Using example data.")
-            object_points_path = os.path.join(
-                self.cfg.debug.example_dir, "corr_points_object.npy"
-            )
-            grasp_points_path = os.path.join(
-                self.cfg.debug.example_dir, "corr_points_grasp.npy"
-            )
-            self.corr_points_object = Int32MultiArray(
-                data=np.load(object_points_path).flatten().tolist()
-            )
-            self.corr_points_grasp = Int32MultiArray(
-                data=np.load(grasp_points_path).flatten().tolist()
-            )
+            # object correspondence points
+            path = os.path.join(self.cfg.debug.example_dir, "corr_points_object.npy")
+            np_data = np.load(path)
+            self.corr_points_object = np_to_multiarraymsg(np_data, Int32MultiArray)
+            # grasp correspondence points
+            path = os.path.join(self.cfg.debug.example_dir, "corr_points_grasp.npy")
+            np_data = np.load(path)
+            self.corr_points_grasp = np_to_multiarraymsg(np_data, Int32MultiArray)
         else:
             rospy.loginfo("Estimating correspondence...")
             self.corr_points_object, self.corr_points_grasp = (
@@ -159,8 +195,44 @@ class Pipeline:
                 )
             )
             rospy.loginfo("Correspondence estimation completed.")
-        # TODO: Extend the pipeline
+
+        # Get the camera info for the grasp image
+        if self.cfg.debug.bypass_hand_reconstructor:
+            rospy.loginfo("Bypassing hand reconstructor. Using example data.")
+            # Camera info
+            path = os.path.join(self.cfg.debug.example_dir, "K_grasp.npy")
+            K_grasp = np.load(path)
+            self.grasp_camera_info = CameraInfo()
+            self.grasp_camera_info.K = K_grasp.flatten().tolist()
+        else:
+            raise NotImplementedError("Hand reconstruction is not implemented yet. ")
+
+        # Estimate the transform between the object and grasp images
+        if self.cfg.debug.bypass_transform_estimator:
+            rospy.loginfo("Bypassing transform estimator. Using example data.")
+            # Load the example transform from a file
+            transform_path = os.path.join(
+                self.cfg.debug.example_dir, "transform_grasp_to_object.npy"
+            )
+            transform_data = np.load(transform_path)
+            self.transform_grasp_to_object = np_to_transformmsg(transform_data)
+        else:
+            rospy.loginfo("Estimating transform from grasp to object image...")
+            self.transform_grasp_to_object = (
+                self.transform_estimation_client.estimate_transform(
+                    object_camera_info=self.object_camera_info,
+                    grasp_camera_info=self.grasp_camera_info,
+                    object_image_depth=self.object_image_depth,
+                    corr_points_object=self.corr_points_object,
+                    corr_points_grasp=self.corr_points_grasp,
+                )
+            )
+
+        # dump all results to the output directory
         self.dump_results()
+
+    def main_loop(self):
+        pass
 
     #########################
     ### Utility Functions ###
@@ -213,12 +285,39 @@ class Pipeline:
             f.write(f"Object Description: {obj_desc}\n")
             f.write(f"Task Description: {task_desc}\n")
 
+        # Save the object camera intrinsic matrix if available
+        if self.object_camera_info is not None:
+            intrinsic_matrix = np.array(
+                self.object_camera_info.K, dtype=np.float64
+            ).reshape(3, 3)
+            np.save(os.path.join(self.out_dir, "K_object.npy"), intrinsic_matrix)
+        else:
+            rospy.logwarn("No object camera info to save.")
+
         # Save the object image if available
         if self.object_image is not None:
             object_image_path = os.path.join(self.out_dir, "object_image.png")
             cv2.imwrite(object_image_path, imgmsg_to_cv2(self.object_image))
         else:
             rospy.logwarn("No object image to save.")
+
+        # Save the object depth image if available
+        if self.object_image_depth is not None:
+            object_depth_image_path = os.path.join(
+                self.out_dir, "object_image_depth.png"
+            )
+            cv2.imwrite(object_depth_image_path, imgmsg_to_cv2(self.object_image_depth))
+        else:
+            rospy.logwarn("No object depth image to save.")
+
+        # Save the grasp camera intrinsic matrix if available
+        if self.grasp_camera_info is not None:
+            intrinsic_matrix = np.array(
+                self.grasp_camera_info.K, dtype=np.float64
+            ).reshape(3, 3)
+            np.save(os.path.join(self.out_dir, "K_grasp.npy"), intrinsic_matrix)
+        else:
+            rospy.logwarn("No grasp camera info to save.")
 
         # Save the grasp image if available
         if self.grasp_image is not None:
@@ -240,7 +339,17 @@ class Pipeline:
         else:
             rospy.logwarn("No correspondence points to save.")
 
-        rospy.loginfo(f"All results saved")
+        # Save the transform from grasp to object image if available
+        if self.transform_grasp_to_object is not None:
+            transform_matrix = transformmsg_to_np(self.transform_grasp_to_object)
+            np.save(
+                os.path.join(self.out_dir, "transform_grasp_to_object.npy"),
+                transform_matrix,
+            )
+        else:
+            rospy.logwarn("No transform from grasp to object image to save.")
+
+        rospy.loginfo("All results saved")
 
     #####################
     ### ROS Callbacks ###

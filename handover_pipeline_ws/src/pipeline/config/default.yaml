@@ -13,6 +13,11 @@ correspondence_estimator_client:
   ros:
     timeout: 100  # Timeout for the service call in seconds
 
+transform_estimator_client:
+  server_name: "transform_estimator"  # Name of the ROS service to call
+  ros:
+    timeout: 100  # Timeout for the service call in seconds
+
 debug:
   # All output data will be saved in this directory.
   out_dir: "/Handover_Pipeline/outputs/"
@@ -26,3 +31,7 @@ debug:
   bypass_grasp_generator: true
   # If true, the correspondence estimator will not be called, and example data will be used instead.
   bypass_correspondence_estimator: true
+  # If true, the hand reconstructor will not be called, and example data will be used instead.
+  bypass_hand_reconstructor: true
+  # If true, the transform estimator will not be called, and example data will be used instead.
+  bypass_transform_estimator: true

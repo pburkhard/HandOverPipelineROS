@@ -1,0 +1,15 @@
+ros:
+  node_name: transform_estimator
+
+lambda_proj: 10  # lambda for projection loss
+lambda_dist: 0.1  # lambda for distance loss
+
+debug:
+  # All output data will be saved to the output directory.
+  # The directory can be set to a fixed path or dynamically set via the out_dir_topic.
+  out_dir_mode: "topic"  # Options: "fixed", "topic"
+  out_dir_topic: "/out_dir"  # Topic to set the output directory dynamically (if out_dir_mode is "topic")
+  out_dir_fixed: "/Handover_Pipeline/outputs/" # Fixed output directory path (if out_dir_mode is "fixed")
+  log_3d_points: True  # log the estimated 3D correspondence points
+  log_optimization_results: True  # log verbose optimization results
+  log_visualization: True  # log visualization of the transform

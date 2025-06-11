@@ -1,0 +1,16 @@
+name: transform_estimator
+channels:
+  - defaults
+dependencies:
+  - python=3.12
+  - pip
+  - pip:
+    - catkin_pkg
+    - dotenv
+    - empy
+    - matplotlib
+    - numpy
+    - omegaconf
+    - open3d
+    - rospkg
+    - scipy
