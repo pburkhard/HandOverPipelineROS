@@ -1,175 +1,19 @@
 #!/usr/bin/env python3
-import actionlib
 from datetime import datetime
 from dotenv import load_dotenv
 import cv2
-from cv_bridge import CvBridge
 from hydra import initialize, compose
 import numpy as np
 from omegaconf import DictConfig
 import os
 import rospy
+
+from correspondence_estimation_client import CorrespondenceEstimationClient
+from grasp_generation_client import GraspGenerationClient
+from utils import cv2_to_imgmsg, imgmsg_to_cv2
+
 from sensor_msgs.msg import Image
 from std_msgs.msg import String, Int32MultiArray
-
-from grasp_generator.msg import (
-    GenerateGraspAction,
-    GenerateGraspGoal,
-)
-
-from correspondence_estimator.msg import (
-    EstimateCorrespondenceAction,
-    EstimateCorrespondenceGoal,
-)
-
-
-class CorrespondenceEstimationClient:
-    def __init__(self, cfg: DictConfig):
-        self.cfg = cfg
-
-        self._action_client = actionlib.SimpleActionClient(
-            self.cfg.server_name, EstimateCorrespondenceAction
-        )
-        self._cv_bridge = CvBridge()
-        rospy.loginfo(f"Waiting for action server {self.cfg.server_name}...")
-        self._action_client.wait_for_server()
-        rospy.loginfo(f"Action server {self.cfg.server_name} is up.")
-
-    def estimate_correspondence(
-        self, object_image: Image, grasp_image: Image, object_description: String
-    ):
-        """
-        Estimate correspondence points between the object image and the grasp image.
-        Args:
-            object_image: The image of the object to grasp.
-            grasp_image: The image of the generated grasp.
-            object_description: Description of the object.
-        Returns:
-            A tuple of two lists containing the correspondence points in the object image
-            and the grasp image, respectively (in this order).
-        """
-        rospy.loginfo("Estimating correspondence...")
-        self._send_goal(
-            image_1=object_image,
-            image_2=grasp_image,
-            object_description=object_description,
-        )
-
-        self._action_client.wait_for_result(rospy.Duration(self.cfg.ros.timeout))
-        result = self._action_client.get_result()
-
-        if result is None:
-            rospy.logerr("No result received from the action server.")
-            return None
-
-        rospy.loginfo("Correspondence estimated successfully.")
-        return result.points_1, result.points_2
-
-    def _send_goal(self, image_1: Image, image_2: Image, object_description: String):
-        goal_msg = EstimateCorrespondenceGoal()
-        goal_msg.image_1 = image_1
-        goal_msg.image_2 = image_2
-        goal_msg.object_description = object_description.data
-
-        rospy.loginfo(
-            f"Sending goal with object description: '{goal_msg.object_description}'."
-        )
-        self._action_client.send_goal(
-            goal_msg,
-            done_cb=self._done_callback,
-            active_cb=self._active_callback,
-            feedback_cb=self._feedback_callback,
-        )
-
-    def _active_callback(self):
-        rospy.loginfo("Correspondence goal just went active.")
-
-    def _feedback_callback(self, feedback):
-        rospy.loginfo(f"Received feedback: {feedback.status}")
-
-    def _done_callback(self, status, result):
-        rospy.loginfo(
-            f"Action done. Status: {status}, success: {getattr(result, 'success', None)}"
-        )
-
-
-class GraspGenerationClient:
-    def __init__(self, cfg: DictConfig):
-        self.cfg = cfg
-
-        self._action_client = actionlib.SimpleActionClient(
-            self.cfg.server_name, GenerateGraspAction
-        )
-        self._cv_bridge = CvBridge()
-        rospy.loginfo(f"Waiting for action server {self.cfg.server_name}...")
-        self._action_client.wait_for_server()
-        rospy.loginfo(f"Action server {self.cfg.server_name} is up.")
-
-    def generate_grasp_image(
-        self, object_image: Image, object_description: String, task_description: String
-    ) -> Image:
-        """
-        Generate a grasp image based on the provided object image and descriptions. Waits
-        for the action server to complete the task and returns the result.
-        Args:
-            object_image: The image of the object to grasp.
-            object_description: Description of the object.
-            task_description: Description of the task.
-        Returns:
-            The result of the grasp generation.
-        """
-        rospy.loginfo("Generating grasp image...")
-        self._send_goal(
-            object_image=object_image,
-            object_description=object_description,
-            task_description=task_description,
-        )
-
-        # Wait for the action to complete
-        self._action_client.wait_for_result(rospy.Duration(self.cfg.ros.timeout))
-        result = self._action_client.get_result()
-
-        if result is None:
-            rospy.logerr("No result received from the action server.")
-            return None
-
-        rospy.loginfo("Grasp image generated successfully.")
-        return result.grasp_image
-
-    def _send_goal(
-        self, object_image: Image, object_description: String, task_description: String
-    ):
-        """
-        Send a goal to the action server to generate a grasp image.
-        Args:
-            object_image: The image of the object to grasp.
-            object_description: Description of the object.
-            task_description: Description of the task.
-        """
-        goal_msg = GenerateGraspGoal()
-        goal_msg.object_image = object_image
-        goal_msg.object_description = object_description.data
-        goal_msg.task_description = task_description.data
-
-        rospy.loginfo(
-            f"Sending goal with object description: '{goal_msg.object_description}'"
-            + f" and task description: '{goal_msg.task_description}'."
-        )
-        self._action_client.send_goal(
-            goal_msg,
-            done_cb=self._done_callback,
-            active_cb=self._active_callback,
-            feedback_cb=self._feedback_callback,
-        )
-
-    def _active_callback(self):
-        rospy.loginfo("Goal just went active.")
-
-    def _feedback_callback(self, feedback):
-        rospy.loginfo(f"Received feedback: {feedback.status}")
-
-    def _done_callback(self, status, result):
-        rospy.loginfo(f"Action done. Status: {status}, success: {result.success}")
 
 
 class Pipeline:
@@ -197,7 +41,6 @@ class Pipeline:
 
     def __init__(self, cfg: DictConfig):
         self.cfg = cfg
-        self._cv_bridge = CvBridge()
 
         # Create output directory with a timestamp and pass it to other components
         self.out_dir = self._create_output_directory(self.cfg.debug.out_dir)
@@ -269,7 +112,7 @@ class Pipeline:
             rospy.loginfo("Bypassing camera subscriber. Using example image.")
             path = os.path.join(self.cfg.debug.example_dir, "object_image.png")
             image = cv2.imread(path)
-            self.object_image = self._cv_bridge.cv2_to_imgmsg(image, encoding="bgr8")
+            self.object_image = cv2_to_imgmsg(image, encoding="bgr8")
         else:
             while self.object_image is None:
                 rospy.loginfo("Waiting for object image from camera topic...")
@@ -281,9 +124,7 @@ class Pipeline:
             rospy.loginfo("Bypassing grasp generator. Using example image.")
             path = os.path.join(self.cfg.debug.example_dir, "grasp_image.png")
             grasp_image = cv2.imread(path)
-            self.grasp_image = self._cv_bridge.cv2_to_imgmsg(
-                grasp_image, encoding="bgr8"
-            )
+            self.grasp_image = cv2_to_imgmsg(grasp_image, encoding="bgr8")
         else:
             rospy.loginfo("Generating grasp image...")
             self.grasp_image = self.grasp_generation_client.generate_grasp_image(
@@ -375,18 +216,14 @@ class Pipeline:
         # Save the object image if available
         if self.object_image is not None:
             object_image_path = os.path.join(self.out_dir, "object_image.png")
-            cv2.imwrite(
-                object_image_path, self._cv_bridge.imgmsg_to_cv2(self.object_image)
-            )
+            cv2.imwrite(object_image_path, imgmsg_to_cv2(self.object_image))
         else:
             rospy.logwarn("No object image to save.")
 
         # Save the grasp image if available
         if self.grasp_image is not None:
             grasp_image_path = os.path.join(self.out_dir, "grasp_image.png")
-            cv2.imwrite(
-                grasp_image_path, self._cv_bridge.imgmsg_to_cv2(self.grasp_image)
-            )
+            cv2.imwrite(grasp_image_path, imgmsg_to_cv2(self.grasp_image))
         else:
             rospy.logwarn("No grasp image to save.")
 
@@ -424,7 +261,7 @@ class Pipeline:
         """
         TODO
         """
-        pass
+        raise NotImplementedError("Task callback is not implemented yet.")
 
     def _camera_callback(self, msg: Image):
         """
