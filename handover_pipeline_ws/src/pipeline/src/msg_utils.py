@@ -58,11 +58,10 @@ def imgmsg_to_cv2(image_msg):
         return img[..., ::-1]
     elif image_msg.encoding == "mono8":
         dtype = np.uint8
-        channels = 1
         img = np.frombuffer(image_msg.data, dtype=dtype).reshape(
-            (image_msg.height, image_msg.width, channels)
+            (image_msg.height, image_msg.width)
         )
-        return img.squeeze()
+        return img
     else:
         raise ValueError(f"Unsupported encoding: {image_msg.encoding}")
 
@@ -98,7 +97,6 @@ def np_to_multiarraymsg(
     # Use empty strings as default labels for dimensions when no labels are provided.
     dimension_labels = dimension_labels or [""] * n
 
-    msg.data = np_array.flatten().tolist()
     for i in range(np_array.ndim):
         msg.layout.dim.append(
             MultiArrayDimension(
@@ -109,6 +107,21 @@ def np_to_multiarraymsg(
         )
 
     return msg
+
+
+def multiarraymsg_to_np(multiarray_msg):
+    """
+    Convert a ROS multiarray message to a numpy array.
+
+    Args:
+        multiarray_msg: The ROS multiarray message to convert.
+
+    Returns:
+        np.ndarray: The numpy array containing the data from the multiarray message.
+    """
+    return np.array(multiarray_msg.data).reshape(
+        [dim.size for dim in multiarray_msg.layout.dim]
+    )
 
 
 def np_to_transformmsg(np_array: np.ndarray):

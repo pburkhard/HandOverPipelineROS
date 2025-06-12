@@ -7,10 +7,17 @@ from omegaconf import DictConfig
 import open3d
 import os
 from scipy.optimize import minimize
+import sys
 import rospy
 import yaml
 
-from utils import imgmsg_to_cv2, multiarraymsg_to_np, np_to_transformmsg
+# TODO: Remove dependency on the pipeline package
+sys.path.append(os.path.join(os.path.dirname(__file__), "../../pipeline/src/"))
+from msg_utils import (
+    imgmsg_to_cv2,
+    multiarraymsg_to_np,
+    np_to_transformmsg,
+)
 
 from std_msgs.msg import String
 from transform_estimator.msg import (
