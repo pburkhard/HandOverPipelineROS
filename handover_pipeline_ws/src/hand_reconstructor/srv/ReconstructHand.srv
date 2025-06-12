@@ -1,0 +1,7 @@
+# Request
+sensor_msgs/Image image
+---
+# Response
+geometry_msgs/Transform transform_camera_to_hand
+sensor_msgs/CameraInfo camera_info # Estimated camera info
+bool success

@@ -13,6 +13,11 @@ correspondence_estimator_client:
   ros:
     timeout: 100  # Timeout for the service call in seconds
 
+hand_reconstructor_client:
+  server_name: "hand_reconstructor"  # Name of the ROS service to call
+  ros:
+    timeout: 100  # Timeout for the service call in seconds
+
 transform_estimator_client:
   server_name: "transform_estimator"  # Name of the ROS service to call
   ros:

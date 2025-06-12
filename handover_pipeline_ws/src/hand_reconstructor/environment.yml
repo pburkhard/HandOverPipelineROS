@@ -1,0 +1,15 @@
+name: hand_reconstructor
+channels:
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+  - pip:
+    - catkin_pkg
+    - empy
+    - omegaconf
+    - pyyaml
+    - roskpkg
+    - torch
+    - torchvision
+  # The other dependencies are installed via the setup.py script

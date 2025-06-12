@@ -10,8 +10,9 @@ import rospy
 
 from correspondence_estimation_client import CorrespondenceEstimationClient
 from grasp_generation_client import GraspGenerationClient
+from hand_reconstructor_client import HandReconstructorClient
 from transform_estimation_client import TransformEstimationClient
-from utils import (
+from msg_utils import (
     cv2_to_imgmsg,
     imgmsg_to_cv2,
     np_to_transformmsg,
@@ -43,7 +44,7 @@ class Pipeline:
     corr_points_object: Int32MultiArray = None
     # Correspondence points in the grasp image
     corr_points_grasp: Int32MultiArray = None
-    # Transform from the grasp image to the object image
+    # Transform from the grasp frame to the object frames
     transform_grasp_to_object: Transform = None
 
     # This publisher tells the other nodes where to save the output files
@@ -52,8 +53,9 @@ class Pipeline:
     # Subscribers and clients
     task_topic_subscriber: rospy.Subscriber = None
     camera_topic_subscriber: rospy.Subscriber = None
-    grasp_generation_client: GraspGenerationClient = None
     correspondence_estimation_client: CorrespondenceEstimationClient = None
+    hand_reconstructor_client: HandReconstructorClient = None
+    grasp_generation_client: GraspGenerationClient = None
     transform_estimation_client: TransformEstimationClient = None
 
     def __init__(self, cfg: DictConfig):
@@ -105,6 +107,12 @@ class Pipeline:
         if not self.cfg.debug.bypass_correspondence_estimator:
             self.correspondence_estimation_client = CorrespondenceEstimationClient(
                 self.cfg.correspondence_estimator_client
+            )
+
+        # Setup the hand reconstruction client
+        if not self.cfg.debug.bypass_hand_reconstructor:
+            self.hand_reconstructor_client = HandReconstructorClient(
+                self.cfg.hand_reconstructor_client
             )
 
         # Setup the transform estimation client
@@ -205,7 +213,10 @@ class Pipeline:
             self.grasp_camera_info = CameraInfo()
             self.grasp_camera_info.K = K_grasp.flatten().tolist()
         else:
-            raise NotImplementedError("Hand reconstruction is not implemented yet. ")
+            rospy.loginfo("Estimating camera intrinsics for the grasp image...")
+            self.grasp_camera_info = self.hand_reconstructor_client.reconstruct_hand(
+                image=self.grasp_image
+            )[1]
 
         # Estimate the transform between the object and grasp images
         if self.cfg.debug.bypass_transform_estimator:
