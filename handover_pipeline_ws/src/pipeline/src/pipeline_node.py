@@ -23,6 +23,7 @@ from msg_utils import (
 from geometry_msgs.msg import Transform
 from sensor_msgs.msg import Image, CameraInfo
 from std_msgs.msg import String, Int32MultiArray
+from tf2_msgs.msg import TFMessage
 
 
 class Pipeline:
@@ -46,6 +47,10 @@ class Pipeline:
     corr_points_grasp: Int32MultiArray = None
     # Transform from the grasp frame to the object frames
     transform_grasp_to_object: Transform = None
+    # Transform from the object frame to the gripper frame
+    transform_object_to_gripper: Transform = None
+    # Overall transform from the hand frame to the gripper frame
+    transform_hand_to_gripper: Transform = None
 
     # This publisher tells the other nodes where to save the output files
     out_dir_publisher: rospy.Publisher = None
@@ -53,6 +58,7 @@ class Pipeline:
     # Subscribers and clients
     task_topic_subscriber: rospy.Subscriber = None
     camera_topic_subscriber: rospy.Subscriber = None
+    transform_topic_subscriber: rospy.Subscriber = None
     correspondence_estimation_client: CorrespondenceEstimationClient = None
     hand_reconstructor_client: HandReconstructorClient = None
     grasp_generation_client: GraspGenerationClient = None
@@ -83,7 +89,7 @@ class Pipeline:
                 self.cfg.ros.task_topic,
                 String,
                 self._task_callback,
-                queue_size=self.cfg.ros.queue_size,
+                queue_size=1,
             )
             rospy.loginfo(f"Subscribed to task topic: {self.cfg.ros.task_topic}")
 
@@ -93,9 +99,21 @@ class Pipeline:
                 self.cfg.ros.camera_topic,
                 Image,
                 self._camera_callback,
-                queue_size=self.cfg.ros.queue_size,
+                queue_size=1,
             )
             rospy.loginfo(f"Subscribed to camera topic: {self.cfg.ros.camera_topic}")
+
+        # Setup the transform topic subscriber
+        if not self.cfg.debug.bypass_transform_subscriber:
+            self.transform_topic_subscriber = rospy.Subscriber(
+                self.cfg.ros.transform_topic,
+                TFMessage,
+                self._transform_callback,
+                queue_size=1,
+            )
+            rospy.loginfo(
+                f"Subscribed to transform topic: {self.cfg.ros.transform_topic}"
+            )
 
         # Setup the grasp generation client
         if not self.cfg.debug.bypass_grasp_generator:
@@ -129,6 +147,11 @@ class Pipeline:
         self.main_loop()
 
     def initialization_step(self):
+        """
+        Run the initialization step of the pipeline. This step is responsible for
+        getting the transform from the hand frame to the gripper frame.
+        """
+        rospy.loginfo("Starting initialization step...")
 
         # Get the task description data
         if self.cfg.debug.bypass_task_subscriber:
@@ -239,8 +262,31 @@ class Pipeline:
                 )
             )
 
+        # Get the transform from the object frame to the gripper frame
+        if self.cfg.debug.bypass_transform_subscriber:
+            rospy.loginfo("Bypassing transform subscriber. Using example data.")
+            # Load the example transform from a file
+            transform_path = os.path.join(
+                self.cfg.debug.example_dir, "transform_object_to_gripper.npy"
+            )
+            transform_data = np.load(transform_path)
+            self.transform_object_to_gripper = np_to_transformmsg(transform_data)
+        else:
+            while self.transform_object_to_gripper is None:
+                rospy.loginfo("Waiting for transform from object to gripper frame...")
+                rospy.sleep(0.1)
+            rospy.loginfo("Transform from object to gripper frame received.")
+
+        # Finally calculate the overall transform from the hand frame to the gripper frame
+        self.transform_hand_to_gripper = self._concat_transforms(
+            self.transform_grasp_to_object, self.transform_object_to_gripper
+        )
+
         # dump all results to the output directory
-        self.dump_results()
+        if self.cfg.debug.save_init_results:
+            self.dump_results()
+
+        rospy.loginfo("Initialization step completed successfully.")
 
     def main_loop(self):
         pass
@@ -272,6 +318,24 @@ class Pipeline:
                 "Creating a new directory with a different timestamp."
             )
             rospy.sleep(1)  # Wait for a second before trying again
+
+    def _concat_transforms(
+        self, transform1: Transform, transform2: Transform
+    ) -> Transform:
+        """
+        Concatenate two transforms (transform1 * transform2) and return the resulting transform.
+        Args:
+            transform1 (Transform): The first transform.
+            transform2 (Transform): The second transform.
+        Returns:
+            Transform: The concatenated transform.
+        """
+        # This is not the numerically most stable way to concatenate
+        # transforms, do notcuse this when high precision is required.
+        t1 = transformmsg_to_np(transform1)
+        t2 = transformmsg_to_np(transform2)
+        t_combined = np.dot(t1, t2)
+        return np_to_transformmsg(t_combined)
 
     def dump_results(self):
         """
@@ -360,6 +424,26 @@ class Pipeline:
         else:
             rospy.logwarn("No transform from grasp to object image to save.")
 
+        # Save the transform from object to gripper frame if available
+        if self.transform_object_to_gripper is not None:
+            transform_matrix = transformmsg_to_np(self.transform_object_to_gripper)
+            np.save(
+                os.path.join(self.out_dir, "transform_object_to_gripper.npy"),
+                transform_matrix,
+            )
+        else:
+            rospy.logwarn("No transform from object to gripper frame to save.")
+
+        # Save the overall transform from hand to gripper frame if available
+        if self.transform_hand_to_gripper is not None:
+            transform_matrix = transformmsg_to_np(self.transform_hand_to_gripper)
+            np.save(
+                os.path.join(self.out_dir, "transform_hand_to_gripper.npy"),
+                transform_matrix,
+            )
+        else:
+            rospy.logwarn("No overall transform from hand to gripper frame to save.")
+
         rospy.loginfo("All results saved")
 
     #####################
@@ -392,6 +476,19 @@ class Pipeline:
         """
         self.object_image = msg
         rospy.loginfo("Received object image from camera topic.")
+
+    def _transform_callback(self, msg: TFMessage):
+        """
+        Callback function for the transform topic subscriber. Receives a transform message
+        and stores it in the transform_object_to_gripper attribute.
+        Args:
+            msg (TFMessage): The transform message received from the transform topic.
+        """
+        if msg.transforms:
+            self.transform_object_to_gripper = msg.transforms[0].transform
+            rospy.loginfo("Received transform from object to gripper frame.")
+        else:
+            rospy.logwarn("Received empty transform message.")
 
 
 if __name__ == "__main__":
