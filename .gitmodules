@@ -1,3 +1,6 @@
 [submodule "handover_pipeline_ws/src/correspondence_estimator/third-party/dino-vit-features"]
 	path = handover_pipeline_ws/src/correspondence_estimator/third-party/dino-vit-features
 	url = https://github.com/ShirAmir/dino-vit-features
+[submodule "handover_pipeline_ws/src/hand_reconstructor/third-party/hamer"]
+	path = handover_pipeline_ws/src/hand_reconstructor/third-party/hamer
+	url = git@github.com:geopavlakos/hamer.git
