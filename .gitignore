@@ -2,10 +2,10 @@
 /.vscode
 
 # Large files
-/data
+/data/*
 
 # I/O (except examples)
-/outputs
+/outputs/*
 /input/*
 !/input/examples/
 !/input/examples/**

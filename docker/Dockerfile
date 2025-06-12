@@ -1,7 +1,7 @@
 ##############
 # Base Image #
 ##############
-FROM nvidia/cuda:12.4.0-runtime-ubuntu20.04 AS base
+FROM nvidia/cuda:12.4.0-devel-ubuntu20.04 AS base
 
 # Path to project root folder inside the container
 ARG PROJECT_ROOT_PATH

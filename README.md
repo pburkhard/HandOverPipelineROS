@@ -1,4 +1,4 @@
-# HandOverPipelineROS
+# Handover Pipeline
 
 ## Setup
 
@@ -11,7 +11,7 @@
 2. **Build and enter the Docker container**
 
     ```bash
-    /scripts/start_docker.bash
+    bash ./scripts/start_docker.bash
     ```
 
     You can attach a VS Code window or exec into the container from the terminal.
@@ -21,17 +21,21 @@
     In the workspace root folder, run:
 
     ```bash
-    /handover_pipeline_ws/setup.bash
+    bash ./handover_pipeline_ws/setup.bash
     ```
+    This allows you to use commands like `catkin_make` right out of the box.
 
-    > **Note:** This step initializes all required conda environments. It may take some time due to large packages like `torch`.
+4. **(Inside the container) Set up the packages**
 
-4. **(Inside the container) Initialize the workspace**
+    Set up all packages that you want to use by following the steps in their associated README located at `./handover_pipeline_ws/src/<package_name>/README.md`
+
+
+5. **(Inside the container) Initialize the workspace**
 
     The conda base environment should have all requirements installed:
 
     ```bash
-    cd /handover_pipeline_ws
+    cd ./handover_pipeline_ws
     catkin_make
     ```
 
@@ -61,8 +65,8 @@
 
 2. **Consult individual package documentation**
 
-    - See `/handover_pipeline_ws/<package_name>/README.md`
-    - Check configuration in `/handover_pipeline_ws/<package_name>/config/`
+    - See `./handover_pipeline_ws/src/<package_name>/README.md`
+    - Check configuration in `./handover_pipeline_ws/src/<package_name>/config/`
 
 ---
 
