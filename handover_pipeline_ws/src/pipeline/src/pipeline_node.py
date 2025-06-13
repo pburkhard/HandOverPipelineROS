@@ -185,6 +185,9 @@ class Pipeline:
         self.initialization_step()
 
         # Enter the main loop
+        if self.cfg.debug.skip_main_loop:
+            rospy.loginfo("Skipping main loop as per configuration.")
+            return
         self.main_loop()
 
     def initialization_step(self):

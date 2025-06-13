@@ -49,8 +49,10 @@ debug:
   # If true, the correspondence estimator will not be called, and example data will be used instead.
   bypass_correspondence_estimator: true
   # If true, the hand reconstructor will not be called, and example data will be used instead.
-  bypass_hand_reconstructor: false
+  bypass_hand_reconstructor: true
   # If true, the grasp -> object transform estimator will not be called, and example data will be used instead.
   bypass_transform_estimator: true
   # If true, the object -> gripper transform subscriber will not be used, and example data will be used instead.
   bypass_transform_subscriber: true
+  # If true, the node will just run the initialization phase and exit.
+  skip_main_loop: true

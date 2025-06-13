@@ -107,8 +107,8 @@ class CorrespondenceEstimator:
             )
 
             # Save the images using OpenCV
-            path_1 = os.path.join(self.out_dir, "image_1_unpreprocessed.png")
-            path_2 = os.path.join(self.out_dir, "image_2_unpreprocessed.png")
+            path_1 = os.path.join(self.out_dir, "(ce)_in1_unprocessed.png")
+            path_2 = os.path.join(self.out_dir, "(ce)_in2_unprocessed.png")
             cv2.imwrite(path_1, img1_data)
             cv2.imwrite(path_2, img2_data)
 
@@ -142,8 +142,8 @@ class CorrespondenceEstimator:
         )
 
         # Save the images as required by the find_correspondences function
-        image_path1 = os.path.join(self.out_dir, "image_1.png")
-        image_path2 = os.path.join(self.out_dir, "image_2.png")
+        image_path1 = os.path.join(self.out_dir, "(ce)_in1.png")
+        image_path2 = os.path.join(self.out_dir, "(ce)_in2.png")
         cv2.imwrite(image_path1, img1_data)
         cv2.imwrite(image_path2, img2_data)
 
@@ -165,6 +165,22 @@ class CorrespondenceEstimator:
                 stride=self.cfg.model_stride,
             )
         rospy.loginfo("Correspondence estimation successful.")
+
+        if self.cfg.debug.log_visualization:
+            # We need to save the output images first due to the way the
+            # draw_correspondences function works
+            # out_1_path = os.path.join(self.out_dir, "(ce)_out1.png")
+            # out_2_path = os.path.join(self.out_dir, "(ce)_out2.png")
+            # out_1.save(out_1_path)
+            # out_2.save(out_2_path)
+            self.save_visualization(
+                points1,
+                points2,
+                out_1,
+                out_2,
+                self.out_dir,
+                title=f"Correspondences for {goal.object_description}",
+            )
 
         # Convert to numpy arrays
         points1 = np.array(points1, dtype=np.float32)
@@ -273,14 +289,14 @@ class CorrespondenceEstimator:
             ros_cropped_images.append(ros_img)
         return ros_cropped_images, bboxes
 
-    def _get_visualisation_object(
+    def _get_visualisation_objects(
         self,
         points1: np.ndarray,
         points2: np.ndarray,
-        image1_path: str,
-        image2_path: str,
+        image1: PILImage.Image,
+        image2: PILImage.Image,
         title: str = "",
-    ) -> plt.Figure:
+    ) -> Tuple[plt.Figure, plt.Figure, plt.Figure]:
         """Create visualization object for the correspondence points.
 
         Args:
@@ -288,21 +304,18 @@ class CorrespondenceEstimator:
                 Dimensions should be (N, 2).
             points2 (np.ndarray): Points in the second image.
                 Dimensions should be (N, 2).
-            image1_path (str): Path to the first image.
-            image2_path (str): Path to the second image.
+            image1 (PILImage.Image): First image as a PIL Image.
+            image2 (PILImage.Image): Second image as a PIL Image.
             title (str): Title for the visualization.
 
         Returns:
-            plt.Figure: A matplotlib figure containing the visualization.
+            Tuple[plt.Figure, plt.Figure, plt.Figure]: A tuple containing the
+            figures for the first image, second image, and the combined visualization.
         """
 
         # Convert points to list of tuples
         points1_tuples = [(int(x), int(y)) for x, y in points1]
         points2_tuples = [(int(x), int(y)) for x, y in points2]
-
-        # Convert images to PIL format
-        image1 = Image.open(image1_path)
-        image2 = Image.open(image2_path)
 
         # Get figures for the images
         fig1, fig2 = draw_correspondences(
@@ -313,17 +326,17 @@ class CorrespondenceEstimator:
 
         # Create a new figure for side-by-side display
         figsize = (fig1_size[0] + fig2_size[0], max(fig1_size[1], fig2_size[1]))
-        output_fig = plt.figure(figsize=figsize)
+        combined_fig = plt.figure(figsize=figsize)
 
         # Extract the figure's canvas as an array
         for i, fig in enumerate([fig1, fig2]):
             buf = io.BytesIO()
             fig.savefig(buf, format="png", bbox_inches="tight")
             buf.seek(0)
-            img = Image.open(buf)
+            img = PILImage.open(buf)
 
             # Add subplot and display the image
-            ax = output_fig.add_subplot(1, 2, i + 1)
+            ax = combined_fig.add_subplot(1, 2, i + 1)
             ax.imshow(np.asarray(img))
             ax.axis("off")
 
@@ -332,16 +345,16 @@ class CorrespondenceEstimator:
         plt.close(fig2)
 
         # Set the title and adjust layout
-        output_fig.suptitle(title)
-        output_fig.tight_layout()
-        return output_fig
+        combined_fig.suptitle(title)
+        combined_fig.tight_layout()
+        return fig1, fig2, combined_fig
 
     def visualize(
         self,
         points1: np.ndarray,
         points2: np.ndarray,
-        image1_path: str,
-        image2_path: str,
+        image1: PILImage.Image,
+        image2: PILImage.Image,
         title: str = "",
     ) -> None:
         """Visualize the correspondence points between two images.
@@ -349,12 +362,12 @@ class CorrespondenceEstimator:
         Args:
             points1 (np.ndarray): Points in the first image. Dimensions should be (N, 2)
             points2 (np.ndarray): Points in the second image. Dimensions should be (N, 2)
-            image1 (np.ndarray): First image.
-            image2 (np.ndarray): Second image.
+            image1 (PILImage.Image): First image as a PIL Image.
+            image2 (PILImage.Image): Second image as a PIL Image.
         """
 
-        self._get_visualisation_object(
-            points1, points2, image1_path, image2_path, title
+        self._get_visualisation_objects(
+            points1, points2, image1, image2, title
         )
         plt.show()
 
@@ -362,9 +375,9 @@ class CorrespondenceEstimator:
         self,
         points1: np.ndarray,
         points2: np.ndarray,
-        image1_path: str,
-        image2_path: str,
-        output_path: str,
+        image1: PILImage.Image,
+        image2: PILImage.Image,
+        output_dir: str,
         title: str = "",
     ) -> None:
         """Save the visualization of the correspondence points between two images.
@@ -372,16 +385,20 @@ class CorrespondenceEstimator:
         Args:
             points1 (np.ndarray): Points in the first image. Dimensions should be (N, 2)
             points2 (np.ndarray): Points in the second image. Dimensions should be (N, 2)
-            image1 (np.ndarray): First image.
-            image2 (np.ndarray): Second image.
-            output_path (str): Path to save the visualization.
+            image1 (PILImage.Image): First image as a PIL Image.
+            image2 (PILImage.Image): Second image as a PIL Image.
+            output_dir (str): Folder to save the visualization in.
         """
 
-        fig = self._get_visualisation_object(
-            points1, points2, image1_path, image2_path, title
+        fig1, fig2, combined_fig = self._get_visualisation_objects(
+            points1, points2, image1, image2, title
         )
-        fig.savefig(output_path)
-        plt.close(fig)
+        fig1.savefig(os.path.join(output_dir, "(ce)_out1.png"), bbox_inches="tight", pad_inches=0)
+        fig2.savefig(os.path.join(output_dir, "(ce)_out2.png"), bbox_inches="tight", pad_inches=0)
+        combined_fig.savefig(
+            os.path.join(output_dir, "(ce)_out_combined.png"), bbox_inches="tight"
+        )
+        plt.close("all")
 
     def _out_dir_callback(self, msg: String):
         """
