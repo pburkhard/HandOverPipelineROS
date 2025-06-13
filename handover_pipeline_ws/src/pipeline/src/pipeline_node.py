@@ -204,7 +204,9 @@ class Pipeline:
             with open(task_desc_path, "r") as f:
                 self.task_description = String(f.read().strip())
         else:
-            while self.object_description is None or self.task_description is None:
+            while not rospy.is_shutdown() and (
+                self.object_description is None or self.task_description is None
+            ):
                 rospy.loginfo("Waiting for task description from topic...")
                 rospy.sleep(0.1)
             rospy.loginfo("Task description received from topic.")
@@ -226,7 +228,7 @@ class Pipeline:
             image = cv2.imread(path, cv2.IMREAD_UNCHANGED)
             self.object_image_depth = cv2_to_imgmsg(image, encoding="mono8")
         else:
-            while self.object_image is None:
+            while not rospy.is_shutdown() and self.object_image is None:
                 rospy.loginfo("Waiting for object image from camera topic...")
                 rospy.sleep(0.1)
             rospy.loginfo("Object image received from camera topic.")
@@ -313,7 +315,7 @@ class Pipeline:
             transform_data = np.load(transform_path)
             self.transform_object_to_gripper = np_to_transformmsg(transform_data)
         else:
-            while self.transform_object_to_gripper is None:
+            while not rospy.is_shutdown() and self.transform_object_to_gripper is None:
                 rospy.loginfo("Waiting for transform from object to gripper frame...")
                 rospy.sleep(0.1)
             rospy.loginfo("Transform from object to gripper frame received.")
@@ -432,7 +434,7 @@ class Pipeline:
             str: The path to the created output directory.
         """
 
-        while True:
+        while not rospy.is_shutdown():
             timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
             out_dir = os.path.join(self.cfg.debug.out_dir, timestamp)
             if not os.path.exists(out_dir):
