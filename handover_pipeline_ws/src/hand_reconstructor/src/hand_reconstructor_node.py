@@ -22,7 +22,7 @@ import hamer
 
 # TODO: Remove dependency on the pipeline package
 sys.path.append(str(Path(__file__).parent.parent.parent / "pipeline/src/"))
-from msg_utils import np_to_transformmsg, imgmsg_to_cv2
+from msg_utils import np_to_transformmsg, imgmsg_to_cv2, np_to_multiarraymsg
 
 from hand_reconstructor.srv import (
     ReconstructHand,
@@ -171,6 +171,10 @@ class HandReconstructor:
         transform_matrix[:3, 3] = translation
         transform_camera_to_hand = np_to_transformmsg(transform_matrix)
 
+        # Extract the 2D keypoints
+        keypoints_2d_np = estimation["pred_keypoints_2d"][0, ...]  # Shape (21, 2)
+        keypoints_2d = np_to_multiarraymsg(keypoints_2d_np)
+
         # Extract the intrinsic matrix
         K = estimation["intrinsic_matrix"][0, ...]  # Shape (3, 3)
         camera_info = CameraInfo()
@@ -182,6 +186,7 @@ class HandReconstructor:
         response = ReconstructHandResponse()
         response.success = True
         response.transform_camera_to_hand = transform_camera_to_hand
+        response.keypoints_2d = keypoints_2d
         response.camera_info = camera_info
 
         return response

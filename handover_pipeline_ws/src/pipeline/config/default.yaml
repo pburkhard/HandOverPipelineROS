@@ -1,8 +1,17 @@
 ros:
   node_name: "handover_pipeline"  # Name of the ROS node
-  task_topic: "/task"  # Topic for the desciption of the intended task
-  transform_topic: "/tf"  # Topic for the object -> gripper transform
-  out_dir_topic: "/out_dir"  # Topic for the output directory of the pipeline
+  subscribed_topics:
+    rgb_camera: "/camera_rgb"  # Contains the rbgd image
+    depth_camera: "/camera_depth"  # Contains the depth image
+    camera_info: "/camera_info"  # Contains the camera info
+    task: "/task"  # Contains information about the object and the task to be performed
+    transform_object_to_gripper: "/tf"  # Contains the object -> gripper transform
+  published_topics:
+    out_dir: "/out_dir"  # Contains the output directory path for saving results
+    transform_camera_to_gripper: "/target_tf"  # Contains the target camera -> gripper transform
+  frame_ids:
+    camera: "camera_frame"  # Frame ID for the camera
+    gripper: "gripper_frame"  # Frame ID for the gripper
 
 grasp_generator_client:
   server_name: "grasp_generator"  # Name of the ROS service to call
@@ -25,11 +34,12 @@ transform_estimator_client:
     timeout: 100  # Timeout for the service call in seconds
 
 debug:
-  save_init_results: true  # If true, intermediate results from the initialization phase will be saved to the output directory.
   # All output data will be saved in a folder in this base directory.
   out_dir: "/Handover_Pipeline/outputs/"
   # Directory from which example data will be loaded.
   example_dir: "/Handover_Pipeline/input/examples/01_bottle/"
+  # If true, intermediate results from the initialization phase will be saved to the output directory.
+  log_init_results: true
   # If true, the camera topic will not be subscribed to, and example data will be used instead.
   bypass_camera_subscriber: true
   # If true, the task topic will not be subscribed to, and example data will be used instead.
