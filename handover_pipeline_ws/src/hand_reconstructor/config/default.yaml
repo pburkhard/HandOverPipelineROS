@@ -7,6 +7,9 @@ hand_detector_confidence_threshold: 0.5
 
 ros:
   node_name: "hand_reconstructor"  # Name of the ROS node
+  provided_services:
+    reconstruct_hand: "reconstruct_hand"  # Service to reconstruct the hand from a given image
+    estimate_camera: "estimate_camera"  # Service to estimate the camera parameters
 
 debug:
   # All output data will be saved to the output directory.
@@ -14,4 +17,6 @@ debug:
   out_dir_mode: "topic"  # Options: "fixed", "topic"
   out_dir_topic: "/out_dir"  # Topic to set the output directory dynamically (if out_dir_mode is "topic")
   out_dir_fixed: "/Handover_Pipeline/outputs/" # Fixed output directory path (if out_dir_mode is "fixed")
-  log_visualization: true  # Log a picture of the reconstructed hand
+  log_visualization:
+    reconstruct_hand: true  # Log a visualization of the reconstructed hand for the reconstruction service
+    estimate_camera: true  # Log a visualization of the estimated camera parameters for the camera estimation service

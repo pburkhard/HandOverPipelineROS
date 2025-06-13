@@ -58,6 +58,7 @@ find_package(catkin REQUIRED COMPONENTS
 add_service_files(
   FILES
   ReconstructHand.srv
+  EstimateCamera.srv
   # other service files can be added here
 )
 

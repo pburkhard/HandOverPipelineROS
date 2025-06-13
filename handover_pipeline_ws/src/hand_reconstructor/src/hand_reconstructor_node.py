@@ -28,8 +28,11 @@ from hand_reconstructor.srv import (
     ReconstructHand,
     ReconstructHandRequest,
     ReconstructHandResponse,
+    EstimateCamera,
+    EstimateCameraRequest,
+    EstimateCameraResponse,
 )
-from std_msgs.msg import String
+from std_msgs.msg import String, Int32MultiArray
 from sensor_msgs.msg import CameraInfo
 
 
@@ -95,7 +98,8 @@ class HandReconstructor:
         self.keypoint_detector = vitpose_model.ViTPoseModel(self.device)
 
         # Setup the renderer to visualize the hand pose
-        self.hand_renderer = Renderer(self.hamer_cfg, faces=self.hamer.mano.faces)
+        if self.cfg.debug.log_visualization:
+            self.hand_renderer = Renderer(self.hamer_cfg, faces=self.hamer.mano.faces)
 
         # Set the output directory
         self.out_dir = None
@@ -120,14 +124,23 @@ class HandReconstructor:
             )
 
         # Once set up, we can start the service
-        self._service = rospy.Service(
-            cfg.ros.node_name,
+        self._reconstr_service = rospy.Service(
+            cfg.ros.provided_services.reconstruct_hand,
             ReconstructHand,
-            self._execute,
+            self._reconstr_srv_callback,
         )
+        self._cam_service = rospy.Service(
+            cfg.ros.provided_services.estimate_camera,
+            EstimateCamera,
+            self._cam_srv_callback,
+        )
+        self.n_requests = 0  # Keep track of the number of requests
+
         rospy.loginfo(f"{cfg.ros.node_name} service initialized.")
 
-    def _execute(self, request: ReconstructHandRequest) -> ReconstructHandResponse:
+    def _reconstr_srv_callback(
+        self, request: ReconstructHandRequest
+    ) -> ReconstructHandResponse:
         """Service callback to reconstruct the hand pose from an image.
 
         Args:
@@ -135,23 +148,25 @@ class HandReconstructor:
 
         Returns:
             ReconstructHandResponse containing the transform from camera to
-            hand and camera info.
+            hand and 2D keypoints.
         """
 
         # Validate request
         if not request.image:
             rospy.logerr("Invalid request: No image given.")
             return ReconstructHandResponse(success=False)
+        self.n_requests += 1
 
         # run the image through the hand pose estimator
         image = imgmsg_to_cv2(request.image)
         estimation = self.estimate_hand_poses(image)
 
-        if self.cfg.debug.log_visualization:
+        if self.cfg.debug.log_visualization.reconstruct_hand:
+            path = Path(self.out_dir) / f"hand_reconstruction_{self.n_requests:04d}.png"
             self.save_visualization(
                 estimation=estimation,
-                img_path=request.image.header.frame_id,
-                output_path=self.out_dir,
+                image=image,
+                output_path=path,
             )
 
         # Check how many hands were detected
@@ -173,7 +188,54 @@ class HandReconstructor:
 
         # Extract the 2D keypoints
         keypoints_2d_np = estimation["pred_keypoints_2d"][0, ...]  # Shape (21, 2)
-        keypoints_2d = np_to_multiarraymsg(keypoints_2d_np)
+        labels = ["Point", "Pixel Coordinate"]
+        keypoints_2d = np_to_multiarraymsg(keypoints_2d_np, Int32MultiArray, labels)
+
+        # Prepare the response
+        response = ReconstructHandResponse()
+        response.success = True
+        response.transform_camera_to_hand = transform_camera_to_hand
+        response.keypoints_2d = keypoints_2d
+
+        return response
+
+    def _cam_srv_callback(
+        self, request: EstimateCameraRequest
+    ) -> EstimateCameraResponse:
+        """Service callback to estimate the camera parameters from an image.
+
+        Args:
+            request: EstimateCameraRequest containing the image to process.
+        Returns:
+            EstimateCameraResponse containing the estimated camera parameters.
+        """
+
+        # Validate request
+        if not request.image:
+            rospy.logerr("Invalid request: No image given.")
+            return EstimateCameraResponse(success=False)
+        self.n_requests += 1
+
+        # run the image through the hand pose estimator
+        image = imgmsg_to_cv2(request.image)
+        estimation = self.estimate_hand_poses(image)
+
+        if self.cfg.debug.log_visualization.estimate_camera:
+            path = Path(self.out_dir) / f"hand_reconstruction_{self.n_requests:04d}.png"
+            self.save_visualization(
+                estimation=estimation,
+                image=image,
+                output_path=path,
+            )
+
+        # Check how many hands were detected
+        if estimation["n_hands"] == 0:
+            rospy.logerr("No hands detected in the image.")
+            return EstimateCameraResponse(success=False)
+        elif estimation["n_hands"] > 1:
+            rospy.logwarn(
+                f"Expected exactly one hand, but detected {estimation['n_hands']} hands. Taking the first one."
+            )
 
         # Extract the intrinsic matrix
         K = estimation["intrinsic_matrix"][0, ...]  # Shape (3, 3)
@@ -183,10 +245,8 @@ class HandReconstructor:
         camera_info.K = K.flatten().tolist()  # Flatten the matrix to a list
 
         # Prepare the response
-        response = ReconstructHandResponse()
+        response = EstimateCameraResponse()
         response.success = True
-        response.transform_camera_to_hand = transform_camera_to_hand
-        response.keypoints_2d = keypoints_2d
         response.camera_info = camera_info
 
         return response

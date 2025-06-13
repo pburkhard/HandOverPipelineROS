@@ -1,0 +1,6 @@
+# Request
+sensor_msgs/Image image
+---
+# Response
+sensor_msgs/CameraInfo camera_info # Estimated camera info
+bool success

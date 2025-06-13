@@ -280,9 +280,9 @@ class Pipeline:
             self.grasp_camera_info.K = K_grasp.flatten().tolist()
         else:
             rospy.loginfo("Estimating camera intrinsics for the grasp image...")
-            self.grasp_camera_info = self.hand_reconstructor_client.reconstruct_hand(
+            self.grasp_camera_info = self.hand_reconstructor_client.estimate_camera_info(
                 image=self.grasp_image
-            )[-1]
+            )
 
         # Estimate the transform between the object and grasp images
         if self.cfg.debug.bypass_transform_estimator:

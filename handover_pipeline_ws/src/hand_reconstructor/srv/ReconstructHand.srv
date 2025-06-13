@@ -4,5 +4,4 @@ sensor_msgs/Image image
 # Response
 geometry_msgs/Transform transform_camera_to_hand
 std_msgs/Int32MultiArray keypoints_2d # Keypoints in the hand image, shape (21,2)
-sensor_msgs/CameraInfo camera_info # Estimated camera info
 bool success

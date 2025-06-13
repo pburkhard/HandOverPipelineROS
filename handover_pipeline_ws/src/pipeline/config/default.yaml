@@ -24,9 +24,9 @@ correspondence_estimator_client:
     timeout: 100  # Timeout for the service call in seconds
 
 hand_reconstructor_client:
-  server_name: "hand_reconstructor"  # Name of the ROS service to call
-  ros:
-    timeout: 100  # Timeout for the service call in seconds
+  services:
+    reconstruct_hand: "reconstruct_hand"  # Service to reconstruct the hand from a given image
+    estimate_camera: "estimate_camera"  # Service to estimate the camera parameters
 
 transform_estimator_client:
   server_name: "transform_estimator"  # Name of the ROS service to call
@@ -49,7 +49,7 @@ debug:
   # If true, the correspondence estimator will not be called, and example data will be used instead.
   bypass_correspondence_estimator: true
   # If true, the hand reconstructor will not be called, and example data will be used instead.
-  bypass_hand_reconstructor: true
+  bypass_hand_reconstructor: false
   # If true, the grasp -> object transform estimator will not be called, and example data will be used instead.
   bypass_transform_estimator: true
   # If true, the object -> gripper transform subscriber will not be used, and example data will be used instead.
