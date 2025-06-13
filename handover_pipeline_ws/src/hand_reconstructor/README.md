@@ -71,9 +71,15 @@ The graphics interface EGL gives the following error when running the code in a 
 Error: Invalid device ID (0)
 ```
 
-**Workaround:** Explicitely set the device id environment variable before running the node:
+**Workaround:** First, try to explicitely set the device id environment variable before running the node:
 
 ```bash
 EGL_DEVICE_ID=0
 CUDA_VISIBLE_DEVICES=0
+```
+
+If this doesn't work, install a software-based interface:
+
+```bash
+apt-get update && apt-get install -y libosmesa6-dev
 ```

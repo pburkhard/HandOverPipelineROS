@@ -9,7 +9,7 @@ dependencies:
     - empy
     - omegaconf
     - pyyaml
-    - roskpkg
+    - rospkg
     - torch
     - torchvision
   # The other dependencies are installed via the setup.py script

@@ -10,6 +10,9 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 conda env create -n hand_reconstructor -f ${SCRIPT_DIR}/environment.yml
 
+# Fix numpy version issue
+conda run -n hand_reconstructor pip install --upgrade numpy==1.26.4
+
 # Install third-party dependencies in editable mode
 cd "${SCRIPT_DIR}"
 conda run -n hand_reconstructor pip install -e "${SCRIPT_DIR}/third-party/hamer[all]"
