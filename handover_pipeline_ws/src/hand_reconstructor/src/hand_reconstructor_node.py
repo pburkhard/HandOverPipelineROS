@@ -276,6 +276,17 @@ class HandReconstructor:
         det_out = self.body_detector(img)
         img = img.copy()[:, :, ::-1]  # Convert to RGB format
 
+        if self.cfg.debug.log_detections:
+            path = Path(self.out_dir) / f"(hr)_human_detection_{self.n_requests:04d}.txt"
+            with open(path, "w") as f:
+                instances = det_out["instances"]
+                for i in range(len(instances)):
+                    bbox = instances.pred_boxes.tensor[i].cpu().numpy()
+                    score = instances.scores[i].cpu().numpy()
+                    class_id = instances.pred_classes[i].cpu().numpy()
+                    if class_id == 0:  # Only log human detections
+                        f.write(f"Person {i}: bbox={bbox}, confidence={score}\n")
+
         # Extract predicted bounding boxes (around human) and scores
         det_instances = det_out["instances"]
         valid_idx = (det_instances.pred_classes == 0) & (
@@ -289,6 +300,14 @@ class HandReconstructor:
             img,
             [np.concatenate([pred_bboxes, pred_scores[:, None]], axis=1)],
         )
+
+        if self.cfg.debug.log_detections:
+            path = Path(self.out_dir) / f"(hr)_vitpose_detection_{self.n_requests:04d}.txt"
+            with open(path, "w") as f:
+                for i, vitposes in enumerate(vitposes_out):
+                    f.write(f"Person {i}:\n")
+                    for j, point in enumerate(vitposes["keypoints"]):
+                        f.write(f"  Keypoint {j}: coordinates={point[:2]}, confidence={point[2]}\n")
 
         bboxes = []
 

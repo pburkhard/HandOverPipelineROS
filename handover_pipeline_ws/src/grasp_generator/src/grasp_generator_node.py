@@ -98,14 +98,15 @@ class GraspGenerator:
             self._server.set_aborted(self._result)
             return
         object_image = goal.object_image
-        object_description = goal.object_description
+        object_type = goal.object_description
         task_description = goal.task_description
 
         # Describe the object in the image
         self._feedback.status = "Describing original image..."
         self._feedback.percent_complete = 0.0
         self._server.publish_feedback(self._feedback)
-        object_description = self._describe_image(object_image)
+        prompt = self.cfg.descriptor.prompt.replace("object", object_type)
+        object_description = self._describe_image(object_image, prompt)
         rospy.loginfo(f"Object description: {object_description}")
 
         # Generate the grasp image
@@ -113,10 +114,11 @@ class GraspGenerator:
         self._feedback.percent_complete = 50.0
         self._server.publish_feedback(self._feedback)
         prompt = (
-            f"A hand grasping a {object_description} ready to {task_description}. "
-            + f"{self.cfg.generator.background_prompt}"
+            f"A hand grasping a {object_type} ready to {task_description}. "
+            + f"The {object_type} is described as folllows: {object_description} "
             + "The hand and the object are completely contained in the image. "
-            + f"The {object_description} is described as folllows: {object_description}"
+            + self.cfg.generator.grasp_prompt.replace("{task}", task_description)
+            + f" {self.cfg.generator.background_prompt}"
         )
         rospy.loginfo(f"Image generation prompt: '{prompt}'")
         grasp_image = self._generate_image(prompt)
@@ -195,11 +197,12 @@ class GraspGenerator:
         # Download and return the generated images
         return self._download_image(response)
 
-    def _describe_image(self, image: Image) -> str:
+    def _describe_image(self, image: Image, prompt: str) -> str:
         """
         Describe the given image using the OpenAI API.
         Args:
             image (Image): The ROS sensor_msgs/Image to be described.
+            prompt (str): The prompt to use for the description.
         Returns:
             str: The description of the image.
         """
@@ -225,7 +228,7 @@ class GraspGenerator:
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": self.cfg.descriptor.prompt},
+                        {"type": "text", "text": prompt},
                         {
                             "type": "image_url",
                             "image_url": {

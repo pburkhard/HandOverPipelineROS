@@ -139,6 +139,12 @@ class CorrespondenceEstimator:
             image_2 = images[1]
             rospy.loginfo("Preprocessed images.")
 
+        # Ensure to not exceed the system limits
+        image_1 = self._limit_image_size(image_1)
+        image_1 = self._limit_aspect_ratio(image_1)
+        image_2 = self._limit_image_size(image_2)
+        image_2 = self._limit_aspect_ratio(image_2)
+
         # Convert ROS Image data to numpy arrays
         img1_data = np.frombuffer(image_1.data, dtype=np.uint8).reshape(
             image_1.height, image_1.width, -1
@@ -295,6 +301,93 @@ class CorrespondenceEstimator:
             ros_cropped_images.append(ros_img)
         return ros_cropped_images, bboxes
 
+    def _limit_image_size(self, image: Image) -> Image:
+        """Limit the size of the image to avoid memory issues.
+
+        Args:
+            image (Image): The image to limit.
+
+        Returns:
+            Image: The limited image.
+        """
+        max_size = self.cfg.max_image_size
+        width, height = image.width, image.height
+        if width * height > max_size:
+            rospy.logwarn(
+                f"Image size ({width}, {height}) exceeds maximum size {max_size}. Resizing."
+            )
+            scale = np.sqrt(max_size / (width * height))
+            new_width = int(width * scale)
+            new_height = int(height * scale)
+            # Convert ROS Image to PIL Image, resize, then convert back
+            img_array = np.frombuffer(image.data, dtype=np.uint8).reshape(
+                height, width, -1
+            )
+            pil_img = PILImage.fromarray(img_array)
+            resized_pil_img = pil_img.resize((new_width, new_height), PILImage.LANCZOS)
+            # Convert back to ROS Image
+            resized_ros_img = Image()
+            resized_ros_img.header = image.header
+            resized_ros_img.height = new_height
+            resized_ros_img.width = new_width
+            resized_ros_img.encoding = image.encoding
+            resized_ros_img.step = new_width * 3
+            resized_ros_img.data = resized_pil_img.tobytes()
+            return resized_ros_img
+        return image
+
+    def _limit_aspect_ratio(self, image: Image) -> Image:
+        """Limit the aspect ratio of the image to avoid memory issues.
+
+        Args:
+            image (Image): The image to limit.
+
+        Returns:
+            Image: The limited image.
+        """
+        max_aspect_ratio = self.cfg.max_aspect_ratio
+        width, height = image.width, image.height
+        aspect_ratio = max(width / height, height / width)
+        if aspect_ratio > max_aspect_ratio:
+            rospy.logwarn(
+                f"Image aspect ratio {aspect_ratio} exceeds maximum {max_aspect_ratio}. Padding image."
+            )
+            # Pad the image with black pixels to achieve the target aspect ratio
+            if width / height > max_aspect_ratio:
+                # Too wide: pad height
+                target_height = int(width / max_aspect_ratio)
+                pad_top = (target_height - height) // 2
+                pad_bottom = target_height - height - pad_top
+                pad_left = pad_right = 0
+            else:
+                # Too tall: pad width
+                target_width = int(height / max_aspect_ratio)
+                pad_left = (target_width - width) // 2
+                pad_right = target_width - width - pad_left
+                pad_top = pad_bottom = 0
+
+            img_array = np.frombuffer(image.data, dtype=np.uint8).reshape(
+                height, width, -1
+            )
+            padded_img = cv2.copyMakeBorder(
+                img_array,
+                pad_top,
+                pad_bottom,
+                pad_left,
+                pad_right,
+                borderType=cv2.BORDER_CONSTANT,
+                value=[0, 0, 0],
+            )
+            padded_ros_img = Image()
+            padded_ros_img.header = image.header
+            padded_ros_img.height = padded_img.shape[0]
+            padded_ros_img.width = padded_img.shape[1]
+            padded_ros_img.encoding = image.encoding
+            padded_ros_img.step = padded_ros_img.width * 3
+            padded_ros_img.data = padded_img.tobytes()
+            return padded_ros_img
+        return image
+
     def _get_visualisation_objects(
         self,
         points1: np.ndarray,
@@ -372,9 +465,7 @@ class CorrespondenceEstimator:
             image2 (PILImage.Image): Second image as a PIL Image.
         """
 
-        self._get_visualisation_objects(
-            points1, points2, image1, image2, title
-        )
+        self._get_visualisation_objects(points1, points2, image1, image2, title)
         plt.show()
 
     def save_visualization(
@@ -399,8 +490,12 @@ class CorrespondenceEstimator:
         fig1, fig2, combined_fig = self._get_visualisation_objects(
             points1, points2, image1, image2, title
         )
-        fig1.savefig(os.path.join(output_dir, "(ce)_out1.png"), bbox_inches="tight", pad_inches=0)
-        fig2.savefig(os.path.join(output_dir, "(ce)_out2.png"), bbox_inches="tight", pad_inches=0)
+        fig1.savefig(
+            os.path.join(output_dir, "(ce)_out1.png"), bbox_inches="tight", pad_inches=0
+        )
+        fig2.savefig(
+            os.path.join(output_dir, "(ce)_out2.png"), bbox_inches="tight", pad_inches=0
+        )
         combined_fig.savefig(
             os.path.join(output_dir, "(ce)_out_combined.png"), bbox_inches="tight"
         )

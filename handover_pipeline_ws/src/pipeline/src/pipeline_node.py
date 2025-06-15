@@ -188,7 +188,14 @@ class Pipeline:
 
     def run(self):
         # Run the initialization step to get the transform hand->gripper
-        self.initialization_step()
+        try:
+            self.initialization_step()
+        except Exception as e:
+            rospy.logerr(f"Initialization step failed: {e}")
+            # dump all results to the output directory
+            if self.cfg.debug.log_init_results:
+                self._dump_results()
+            return
 
         # Enter the main loop
         if self.cfg.debug.skip_main_loop:

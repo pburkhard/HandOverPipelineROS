@@ -11,6 +11,10 @@ model_type: "dino_vits8"  # model type to use for feature extraction
 model_stride: 4  # stride of the model
 preprocess_images: True  # whether to preprocess images before feature extraction
 
+# Set this value according to you available GPU memory.
+max_image_size: 10000000 # The input image will be scaled if necessary to not exceed this number of pixels
+max_aspect_ratio: 2.0  # The input image will be scaled if necessary to not exceed this aspect ratio
+
 debug:
   # All output data will be saved to the output directory.
   # The directory can be set to a fixed path or dynamically set via the out_dir_topic.
