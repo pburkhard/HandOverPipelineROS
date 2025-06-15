@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 import cv2
 from hydra import initialize, compose
 import numpy as np
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 import os
 import rospy
 
@@ -180,6 +180,12 @@ class Pipeline:
             queue_size=1,
         )
 
+        # Log the config
+        if self.cfg.debug.log_config:
+            config_path = os.path.join(self.out_dir, "main_config.yaml")
+            with open(config_path, "w") as f:
+                OmegaConf.save(config=self.cfg, f=f.name)
+
     def run(self):
         # Run the initialization step to get the transform hand->gripper
         self.initialization_step()
@@ -283,8 +289,10 @@ class Pipeline:
             self.grasp_camera_info.K = K_grasp.flatten().tolist()
         else:
             rospy.loginfo("Estimating camera intrinsics for the grasp image...")
-            self.grasp_camera_info = self.hand_reconstructor_client.estimate_camera_info(
-                image=self.grasp_image
+            self.grasp_camera_info = (
+                self.hand_reconstructor_client.estimate_camera_info(
+                    image=self.grasp_image
+                )
             )
 
         # Estimate the transform between the object and grasp images

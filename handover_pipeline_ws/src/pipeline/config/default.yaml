@@ -10,8 +10,8 @@ ros:
     out_dir: "/out_dir"  # Contains the output directory path for saving results
     transform_camera_to_gripper: "/target_tf"  # Contains the target camera -> gripper transform
   frame_ids:
-    camera: "camera_frame"  # Frame ID for the camera
-    gripper: "gripper_frame"  # Frame ID for the gripper
+    camera: "camera_color_frame"  # Frame ID for the camera
+    gripper: "handover_pose"  # Frame ID for the gripper
 
 grasp_generator_client:
   server_name: "grasp_generator"  # Name of the ROS service to call
@@ -38,6 +38,8 @@ debug:
   out_dir: "/Handover_Pipeline/outputs/"
   # Directory from which example data will be loaded.
   example_dir: "/Handover_Pipeline/input/examples/01_bottle/"
+  # If true, the configuration used for the pipeline will be logged.
+  log_config: true
   # If true, intermediate results from the initialization phase will be saved to the output directory.
   log_init_results: true
   # If true, the camera topic will not be subscribed to, and example data will be used instead.

@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 import io
 import matplotlib.pyplot as plt
 import numpy as np
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 import os
 from PIL import Image as PILImage
 import torch
@@ -69,6 +69,12 @@ class CorrespondenceEstimator:
             rospy.logerr(
                 "Invalid out_dir_mode. Supported modes are 'fixed' and 'topic'."
             )
+
+        # Log the config
+        if self.cfg.debug.log_config:
+            config_path = os.path.join(self.out_dir, "(ce)_config.yaml")
+            with open(config_path, "w") as f:
+                OmegaConf.save(config=self.cfg, f=f.name)
 
         self._server.start()
         rospy.loginfo(f"{cfg.ros.node_name} action server started.")

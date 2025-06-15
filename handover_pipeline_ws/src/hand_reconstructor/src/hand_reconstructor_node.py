@@ -3,7 +3,7 @@ import cv2
 from dotenv import load_dotenv
 from detectron2.config import LazyConfig
 from detectron2 import model_zoo
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 import numpy as np
 import os
 from pathlib import Path
@@ -123,6 +123,12 @@ class HandReconstructor:
                 "Invalid out_dir_mode. Supported modes are 'fixed' and 'topic'."
             )
 
+        # Log the config
+        if self.cfg.debug.log_config:
+            config_path = os.path.join(self.out_dir, "(hr)_config.yaml")
+            with open(config_path, "w") as f:
+                OmegaConf.save(config=self.cfg, f=f.name)
+
         # Once set up, we can start the service
         self._reconstr_service = rospy.Service(
             cfg.ros.provided_services.reconstruct_hand,
@@ -162,7 +168,7 @@ class HandReconstructor:
         estimation = self.estimate_hand_poses(image)
 
         if self.cfg.debug.log_visualization.reconstruct_hand:
-            path = Path(self.out_dir) / f"hand_reconstruction_{self.n_requests:04d}.png"
+            path = Path(self.out_dir) / f"(hr)_hand_reconstruction_{self.n_requests:04d}.png"
             self.save_visualization(
                 estimation=estimation,
                 image=image,
@@ -221,7 +227,7 @@ class HandReconstructor:
         estimation = self.estimate_hand_poses(image)
 
         if self.cfg.debug.log_visualization.estimate_camera:
-            path = Path(self.out_dir) / f"hand_reconstruction_{self.n_requests:04d}.png"
+            path = Path(self.out_dir) / f"(hr)_hand_reconstruction_{self.n_requests:04d}.png"
             self.save_visualization(
                 estimation=estimation,
                 image=image,

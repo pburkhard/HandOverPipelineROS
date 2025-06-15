@@ -18,5 +18,6 @@ debug:
   out_dir_mode: "topic"  # Options: "fixed", "topic"
   out_dir_topic: "/out_dir"  # Topic to set the output directory dynamically (if out_dir_mode is "topic")
   out_dir_fixed: "/Handover_Pipeline/outputs/" # Fixed output directory path (if out_dir_mode is "fixed")
+  log_config: True # log the configuration used for the grasp generator
   log_description_prompt: True  # log prompt used for object description
   log_generation_prompt: True  # log prompt used for image generation

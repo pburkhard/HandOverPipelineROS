@@ -3,7 +3,7 @@ import actionlib
 from dotenv import load_dotenv
 from mpl_toolkits.mplot3d import Axes3D
 import numpy as np
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 import open3d
 import os
 from scipy.optimize import minimize
@@ -65,6 +65,12 @@ class TransformEstimator:
                 "Invalid out_dir_mode. Supported modes are 'fixed' and 'topic'."
             )
 
+        # Log the config
+        if self.cfg.debug.log_config:
+            config_path = os.path.join(self.out_dir, "(te)_config.yaml")
+            with open(config_path, "w") as f:
+                OmegaConf.save(config=self.cfg, f=f.name)
+
         self._server.start()
         rospy.loginfo(f"{cfg.ros.node_name} action server started.")
 
@@ -105,7 +111,7 @@ class TransformEstimator:
         )
         rospy.loginfo("Lifted object points to 3D space.")
         if self.cfg.debug.log_3d_points:
-            path = os.path.join(self.out_dir, "corr_points_object_3D.npy")
+            path = os.path.join(self.out_dir, "(te)_corr_points_object_3D.npy")
             np.save(path, corr_points_object_3D)
 
         # Get the relative distances between the points in the target frame
@@ -118,7 +124,7 @@ class TransformEstimator:
         )
         rospy.loginfo(f"Reconstructed grasp points in 3D space with cost: {cost:.4f}")
         if self.cfg.debug.log_3d_points:
-            path = os.path.join(self.out_dir, "corr_points_grasp_3D.npy")
+            path = os.path.join(self.out_dir, "(te)_corr_points_grasp_3D.npy")
             np.save(path, corr_points_grasp_3D)
 
         # Estimate the transformation matrix
@@ -130,7 +136,7 @@ class TransformEstimator:
             corr_points_object_3D,
         )
         if self.cfg.debug.log_visualization:
-            path = os.path.join(self.out_dir, "transformation_visualization.png")
+            path = os.path.join(self.out_dir, "(te)_transformation_visualization.png")
             self.save_visualization(
                 source_points=corr_points_grasp_3D,
                 target_points=corr_points_object_3D,
@@ -262,7 +268,7 @@ class TransformEstimator:
         result = minimize(objective_function, initial_params, method="Powell")
         reconstructed_points = result.x.reshape(-1, 3)
         if self.cfg.debug.log_optimization_results:
-            path = os.path.join(self.out_dir, "transform_estimation_results.yaml")
+            path = os.path.join(self.out_dir, "(te)_transform_estimation_results.yaml")
             with open(path, "w") as f:
                 yaml.dump(
                     {

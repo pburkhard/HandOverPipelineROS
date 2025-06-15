@@ -5,7 +5,7 @@ import cv2
 from dotenv import load_dotenv
 from hydra import initialize, compose
 import numpy as np
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 from openai import OpenAI
 from openai.types.images_response import ImagesResponse
 import os
@@ -64,6 +64,12 @@ class GraspGenerator:
             rospy.logerr(
                 "Invalid out_dir_mode. Supported modes are 'fixed' and 'topic'."
             )
+
+        # Log the config
+        if self.cfg.debug.log_config:
+            config_path = os.path.join(self.out_dir, "(gg)_config.yaml")
+            with open(config_path, "w") as f:
+                OmegaConf.save(config=self.cfg, f=f.name)
 
         self._server.start()
         rospy.loginfo(f"{self.cfg.ros.node_name} action server started.")
@@ -172,7 +178,7 @@ class GraspGenerator:
         """
 
         if self.cfg.debug.log_generation_prompt:
-            path = os.path.join(self.out_dir, "generation_prompt.txt")
+            path = os.path.join(self.out_dir, "(gg)_generation_prompt.txt")
             with open(path, "w") as f:
                 f.write(prompt)
 
@@ -208,7 +214,7 @@ class GraspGenerator:
 
         # Log the description prompt if enabled
         if self.cfg.debug.log_description_prompt:
-            path = os.path.join(self.out_dir, "description_prompt.txt")
+            path = os.path.join(self.out_dir, "(gg)_description_prompt.txt")
             with open(path, "w") as f:
                 f.write(self.cfg.descriptor.prompt)
 
