@@ -98,25 +98,22 @@ class CorrespondenceEstimator:
 
         image_1 = goal.image_1
         image_2 = goal.image_2
-        # Keep track of the original image dimensions
-        w1, h1 = image_1.width, image_1.height
-        w2, h2 = image_2.width, image_2.height
+
+        # Convert ROS Image data to numpy array
+        img1_data_original = np.frombuffer(image_1.data, dtype=np.uint8).reshape(
+                image_1.height, image_1.width, -1
+            )
+        img2_data_original = np.frombuffer(image_2.data, dtype=np.uint8).reshape(
+            image_2.height, image_2.width, -1
+        )
 
         # Save the original images if debug logging is enabled
         if self.cfg.debug.log_unprocessed_images:
-            # Convert ROS Image data to numpy array
-            img1_data = np.frombuffer(image_1.data, dtype=np.uint8).reshape(
-                image_1.height, image_1.width, -1
-            )
-            img2_data = np.frombuffer(image_2.data, dtype=np.uint8).reshape(
-                image_2.height, image_2.width, -1
-            )
-
             # Save the images using OpenCV
             path_1 = os.path.join(self.out_dir, "(ce)_in1_unprocessed.png")
             path_2 = os.path.join(self.out_dir, "(ce)_in2_unprocessed.png")
-            cv2.imwrite(path_1, img1_data)
-            cv2.imwrite(path_2, img2_data)
+            cv2.imwrite(path_1, img1_data_original)
+            cv2.imwrite(path_2, img2_data_original)
 
         # Preprocess the images if set in the configuration
         if self.cfg.preprocess_images:
@@ -140,10 +137,14 @@ class CorrespondenceEstimator:
             rospy.loginfo("Preprocessed images.")
 
         # Ensure to not exceed the system limits
-        image_1 = self._limit_image_size(image_1)
-        image_1 = self._limit_aspect_ratio(image_1)
-        image_2 = self._limit_image_size(image_2)
-        image_2 = self._limit_aspect_ratio(image_2)
+        image_1, limit_scale_1 = self._limit_image_size(image_1)
+        image_1, padding_1 = self._limit_aspect_ratio(image_1)
+        image_2, limit_scale_2 = self._limit_image_size(image_2)
+        image_2, padding_2 = self._limit_aspect_ratio(image_2)
+
+        # Keep track of the input image sizes for scaling later
+        w1, h1 = image_1.width, image_1.height
+        w2, h2 = image_2.width, image_2.height
 
         # Convert ROS Image data to numpy arrays
         img1_data = np.frombuffer(image_1.data, dtype=np.uint8).reshape(
@@ -179,12 +180,6 @@ class CorrespondenceEstimator:
         rospy.loginfo("Correspondence estimation successful.")
 
         if self.cfg.debug.log_visualization:
-            # We need to save the output images first due to the way the
-            # draw_correspondences function works
-            # out_1_path = os.path.join(self.out_dir, "(ce)_out1.png")
-            # out_2_path = os.path.join(self.out_dir, "(ce)_out2.png")
-            # out_1.save(out_1_path)
-            # out_2.save(out_2_path)
             self.save_visualization(
                 points1,
                 points2,
@@ -210,11 +205,21 @@ class CorrespondenceEstimator:
         # Get the coordinates in the original image
         if self.cfg.preprocess_images:
             x1, y1, _, _ = bboxes[0]
-            points1[:, 0] += y1
-            points1[:, 1] += x1
+            points1[:, 0] += y1 - padding_1[0]
+            points1[:, 1] += x1 - padding_1[2]
             x1, y1, _, _ = bboxes[1]
-            points2[:, 0] += y1
-            points2[:, 1] += x1
+            points2[:, 0] += y1 - padding_2[0]
+            points2[:, 1] += x1 - padding_2[2]
+
+        if self.cfg.debug.log_visualization:
+            self.save_visualization(
+                points1,
+                points2,
+                PILImage.fromarray(img1_data_original[..., ::-1]),  # Convert BGR to RGB
+                PILImage.fromarray(img2_data_original[..., ::-1]),  # Convert BGR to RGB
+                self.out_dir,
+                postfix="_remapped",
+                title=f"Correspondences for {goal.object_description}",)
 
         # Convert the points to ROS Int32MultiArrays
         points1 = points1.astype(np.int32)
@@ -301,17 +306,18 @@ class CorrespondenceEstimator:
             ros_cropped_images.append(ros_img)
         return ros_cropped_images, bboxes
 
-    def _limit_image_size(self, image: Image) -> Image:
+    def _limit_image_size(self, image: Image) -> Tuple[Image, float]:
         """Limit the size of the image to avoid memory issues.
 
         Args:
             image (Image): The image to limit.
 
         Returns:
-            Image: The limited image.
+            Tuple[Image, float]: The limited image and the scale factor used for resizing.
         """
         max_size = self.cfg.max_image_size
         width, height = image.width, image.height
+        scale = 1.0  # Default scale factor
         if width * height > max_size:
             rospy.logwarn(
                 f"Image size ({width}, {height}) exceeds maximum size {max_size}. Resizing."
@@ -334,16 +340,16 @@ class CorrespondenceEstimator:
             resized_ros_img.step = new_width * 3
             resized_ros_img.data = resized_pil_img.tobytes()
             return resized_ros_img
-        return image
+        return image, scale
 
-    def _limit_aspect_ratio(self, image: Image) -> Image:
+    def _limit_aspect_ratio(self, image: Image) -> Tuple[Image, List[int]]:
         """Limit the aspect ratio of the image to avoid memory issues.
 
         Args:
             image (Image): The image to limit.
 
         Returns:
-            Image: The limited image.
+            Tuple[Image, List[int]]: The limited image and the padding applied
         """
         max_aspect_ratio = self.cfg.max_aspect_ratio
         width, height = image.width, image.height
@@ -385,8 +391,8 @@ class CorrespondenceEstimator:
             padded_ros_img.encoding = image.encoding
             padded_ros_img.step = padded_ros_img.width * 3
             padded_ros_img.data = padded_img.tobytes()
-            return padded_ros_img
-        return image
+            return padded_ros_img, [pad_top, pad_bottom, pad_left, pad_right]
+        return image, [0, 0, 0, 0]  # No padding needed
 
     def _get_visualisation_objects(
         self,
@@ -475,6 +481,7 @@ class CorrespondenceEstimator:
         image1: PILImage.Image,
         image2: PILImage.Image,
         output_dir: str,
+        postfix: str = "",
         title: str = "",
     ) -> None:
         """Save the visualization of the correspondence points between two images.
@@ -485,19 +492,21 @@ class CorrespondenceEstimator:
             image1 (PILImage.Image): First image as a PIL Image.
             image2 (PILImage.Image): Second image as a PIL Image.
             output_dir (str): Folder to save the visualization in.
+            postfix (str): Postfix to append to the output filenames before the extension.
+            title (str): Title for the visualization.
         """
 
         fig1, fig2, combined_fig = self._get_visualisation_objects(
             points1, points2, image1, image2, title
         )
         fig1.savefig(
-            os.path.join(output_dir, "(ce)_out1.png"), bbox_inches="tight", pad_inches=0
+            os.path.join(output_dir, f"(ce)_out1{postfix}.png"), bbox_inches="tight", pad_inches=0
         )
         fig2.savefig(
-            os.path.join(output_dir, "(ce)_out2.png"), bbox_inches="tight", pad_inches=0
+            os.path.join(output_dir, f"(ce)_out2{postfix}.png"), bbox_inches="tight", pad_inches=0
         )
         combined_fig.savefig(
-            os.path.join(output_dir, "(ce)_out_combined.png"), bbox_inches="tight"
+            os.path.join(output_dir, f"(ce)_out_combined{postfix}.png"), bbox_inches="tight"
         )
         plt.close("all")
 
