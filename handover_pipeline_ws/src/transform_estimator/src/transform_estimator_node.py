@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import actionlib
 from dotenv import load_dotenv
+import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 import numpy as np
 from omegaconf import DictConfig, OmegaConf
@@ -113,6 +114,14 @@ class TransformEstimator:
         if self.cfg.debug.log_3d_points:
             path = os.path.join(self.out_dir, "(te)_corr_points_object_3D.npy")
             np.save(path, corr_points_object_3D)
+        if self.cfg.debug.log_visualization:
+            path = os.path.join(self.out_dir, "(te)_3d_reconstruction_object.png")
+            self.save_3d_reconstruction_visualization(
+                intrinsic_matrix=K_object,
+                points_3D=corr_points_object_3D,
+                points_2D=corr_points_object,
+                output_path=path,
+            )
 
         # Get the relative distances between the points in the target frame
         # Those will be used to reconstruct the 3D points in the source frame
@@ -126,6 +135,14 @@ class TransformEstimator:
         if self.cfg.debug.log_3d_points:
             path = os.path.join(self.out_dir, "(te)_corr_points_grasp_3D.npy")
             np.save(path, corr_points_grasp_3D)
+        if self.cfg.debug.log_visualization:
+            path = os.path.join(self.out_dir, "(te)_3d_reconstruction_grasp.png")
+            self.save_3d_reconstruction_visualization(
+                intrinsic_matrix=K_grasp,
+                points_3D=corr_points_grasp_3D,
+                points_2D=corr_points_grasp,
+                output_path=path,
+            )
 
         # Estimate the transformation matrix
         self._feedback.status = "Estimating transformation matrix..."
@@ -137,7 +154,7 @@ class TransformEstimator:
         )
         if self.cfg.debug.log_visualization:
             path = os.path.join(self.out_dir, "(te)_transformation_visualization.png")
-            self.save_visualization(
+            self.save_transform_visualization(
                 source_points=corr_points_grasp_3D,
                 target_points=corr_points_object_3D,
                 transformation_matrix=transformation,
@@ -304,7 +321,7 @@ class TransformEstimator:
             intrinsic_matrix (np.ndarray): 3x3 intrinsic camera matrix.
             depth_image (np.ndarray): Depth image of shape (H,W) where each pixel
                 value is the depth in millimeters.
-            points_2D (np.ndarray): Nx2 array of 2D points in image coordinates.
+            points_2D (np.ndarray): Nx2 array of 2D points in pixel coordinates.
 
         Returns:
             np.ndarray (shape (n,3)): 3D points corresponding to the 2D points.
@@ -323,10 +340,10 @@ class TransformEstimator:
         points_3D = []
         for point in points_2D:
             x, y = point
-            z = depth_image[int(y), int(x)] / 1000.0  # Convert to meters
-            X = (x - cx) * z / fx
-            Y = (y - cy) * z / fy
-            points_3D.append([X, Y, z])
+            Z = depth_image[int(y), int(x)] / 1000.0  # Convert to meters
+            X = (x - cx) * Z / fx
+            Y = (y - cy) * Z / fy
+            points_3D.append([X, Y, Z])
 
         return np.array(points_3D)
 
@@ -401,13 +418,13 @@ class TransformEstimator:
         points_3D: np.ndarray,
     ):
         """Plots a pinhole camera model with the camera center at (0, 0, 0)
-        and the image plane at z = focal length. The 2D image points are
-        projected onto the image plane, and the reconstructed 3D points are
-        plotted in 3D space. The plot can be displayed by calling plt.show().
+        and the image plane at z = z_img_plane. The 2D image points are
+        projected onto the image plane, and the 3D points are plotted in 3D space.
+        The plot can be displayed by calling plt.show().
 
         Args:
             intrinsic_matrix (np.ndarray): 3x3 intrinsic camera matrix.
-            points_2D (np.ndarray): Nx2 array of points in image plane coordinates.
+            points_2D (np.ndarray): Nx2 array of points in pixel coordinates.
               The origin is at the top left corner of the image.
             points_3D (np.ndarray): Nx3 array of the corresponding 3D coordinates.
 
@@ -415,24 +432,35 @@ class TransformEstimator:
             fig (plt.Figure): The figure object containing the plot.
             ax (plt.Axes3D): The 3D axes object for further customization.
         """
-        import matplotlib.pyplot as plt
 
         fig = plt.figure(figsize=(10, 8))
         ax = fig.add_subplot(111, projection="3d")
+
+        # Ensure consistent data types
+        intrinsic_matrix = intrinsic_matrix.astype(np.float64)
+        points_2D = points_2D.astype(np.float64)
+        points_3D = points_3D.astype(np.float64)
 
         # Extract camera intrinsic parameters
         fx = intrinsic_matrix[0, 0]
         fy = intrinsic_matrix[1, 1]
         cx = intrinsic_matrix[0, 2]
         cy = intrinsic_matrix[1, 2]
-        focal_length = (fx + fy) / 2  # Average for better accuracy
+
+        # Compute image plane z position: half the minimum z of the 3D points
+        min_z = np.min(points_3D[:, 2])
+        z_img_plane = min_z / 2.0 if min_z > 0 else 1.0  # fallback to 1.0 if min_z <= 0
 
         if points_2D.min() < 0:
             raise Warning("Got negative pixel coordinates in image points")
 
         # Get the image points in 3D coordinates
-        points_2D[:, 0] -= cx
-        points_2D[:, 1] -= cy
+        # Convert pixel coordinates to normalized image coordinates (focal length = z_image_plane)
+        points_2D_projected = np.zeros_like(points_2D)
+        for i in range(len(points_2D)):
+            x, y = points_2D[i]
+            points_2D_projected[i, 0] = (x - cx) / fx * z_img_plane
+            points_2D_projected[i, 1] = (y - cy) / fy * z_img_plane
 
         # Plot camera center
         ax.scatter(
@@ -447,26 +475,26 @@ class TransformEstimator:
         )
         ax.text(0, 0, 0, "Camera", color="black", fontsize=12)
 
-        # Plot the image plane at an appropriate size
+        # Plot the image plane at z = z_img_plane
         xx, yy = np.meshgrid(
-            np.linspace(-cx, max(points_2D[:, 0].max() * 1.2, 1), 10),
-            np.linspace(-cy, max(points_2D[:, 1].max() * 1.2, 1), 10),
+            np.linspace(-cx, max(points_2D_projected[:, 0].max() * 1.2, 1), 10),
+            np.linspace(-cy, max(points_2D_projected[:, 1].max() * 1.2, 1), 10),
         )
-        zz = np.ones_like(xx) * focal_length
+        zz = np.ones_like(xx) * z_img_plane
         ax.plot_surface(xx, yy, zz, alpha=0.1, color="gray")
 
         # Plot 2D image points on the image plane
         ax.scatter(
-            points_2D[:, 0],
-            points_2D[:, 1],
-            focal_length,
+            points_2D_projected[:, 0],
+            points_2D_projected[:, 1],
+            z_img_plane,
             c="blue",
             s=50,
             label="2D Image Points",
             marker="o",
         )
-        for i, pt in enumerate(points_2D):
-            ax.text(pt[0], pt[1], focal_length, f"P{i}", color="blue", fontsize=10)
+        for i, pt in enumerate(points_2D_projected):
+            ax.text(pt[0], pt[1], z_img_plane, f"P{i}", color="blue", fontsize=10)
 
         # Plot 3D points
         ax.scatter(
@@ -482,12 +510,12 @@ class TransformEstimator:
             ax.text(pt[0], pt[1], pt[2], f"P{i}", color="red", fontsize=10)
 
         # Draw lines from camera center (0,0,0) through image points to 3D points
-        for i, point_2D in enumerate(points_2D):
+        for i, point_2D in enumerate(points_2D_projected):
             # Draw line from camera center to image plane
             ax.plot(
                 [0, point_2D[0]],
                 [0, point_2D[1]],
-                [0, focal_length],
+                [0, z_img_plane],
                 "g--",
                 alpha=0.5,
             )
@@ -495,7 +523,7 @@ class TransformEstimator:
             ax.plot(
                 [point_2D[0], points_3D[i, 0]],
                 [point_2D[1], points_3D[i, 1]],
-                [focal_length, points_3D[i, 2]],
+                [z_img_plane, points_3D[i, 2]],
                 "k-",
                 alpha=0.7,
             )
@@ -540,8 +568,6 @@ class TransformEstimator:
             ax (Axes3D): The 3D axes object for further customization.
         """
 
-        import matplotlib.pyplot as plt
-
         if ax is None:
             fig = plt.figure()
             ax = fig.add_subplot(111, projection="3d")
@@ -580,14 +606,39 @@ class TransformEstimator:
             points_2D (np.ndarray): Nx2 array of 2D image points.
         """
 
-        import matplotlib.pyplot as plt
-
         _, ax = self._plot_camera_model(
             intrinstic_matrix, points_2D, reconstructed_points_3D
         )
         self._plot_3D_points(points_3D, label="Original Points", ax=ax)
         ax.set_title("3D point reconstruction")
         plt.show()
+
+    def save_3d_reconstruction_visualization(
+        self,
+        intrinsic_matrix: np.ndarray,
+        points_3D: np.ndarray,
+        points_2D: np.ndarray,
+        output_path: str,
+    ):
+        """
+        Saves the visualization of the reconstruction process by plotting the
+        3D points, the reconstructed 3D points, and the 2D image points.
+
+        Args:
+            intrinstic_matrix (np.ndarray): 3x3 intrinsic camera matrix.
+            points_3D (np.ndarray): Nx3 array of 3D points.
+            points_2D (np.ndarray): Nx2 array of 2D image points.
+            output_path (str): Path to save the visualization.
+        """
+
+        base, ext = os.path.splitext(output_path)
+        _, ax = self._plot_camera_model(intrinsic_matrix, points_2D, points_3D)
+        plt.savefig(output_path)
+        ax.view_init(elev=0, azim=0)
+        plt.savefig(f"{base}_top_view{ext}")
+        ax.view_init(elev=-90, azim=-90)
+        plt.savefig(f"{base}_front_view{ext}")
+        plt.close()
 
     def visualize(
         self,
@@ -604,7 +655,6 @@ class TransformEstimator:
             target_points (np.ndarray): Nx3 array of 3D points in the target frame.
             transformation_matrix (np.ndarray): 4x4 transformation matrix.
         """
-        import matplotlib.pyplot as plt
 
         transformed_points = self._apply_transformation(
             source_points, transformation_matrix
@@ -616,7 +666,7 @@ class TransformEstimator:
         plt.title("Transformation Estimation")
         plt.show()
 
-    def save_visualization(
+    def save_transform_visualization(
         self,
         source_points: np.ndarray,
         target_points: np.ndarray,
@@ -633,7 +683,6 @@ class TransformEstimator:
             transformation_matrix (np.ndarray): 4x4 transformation matrix.
             output_path (str): Path to save the visualization.
         """
-        import matplotlib.pyplot as plt
 
         transformed_points = self._apply_transformation(
             source_points, transformation_matrix

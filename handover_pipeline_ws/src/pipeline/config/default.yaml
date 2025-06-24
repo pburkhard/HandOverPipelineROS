@@ -1,17 +1,18 @@
 ros:
   node_name: "handover_pipeline"  # Name of the ROS node
   subscribed_topics:
-    rgb_camera: "/camera_rgb"  # Contains the rbgd image
-    depth_camera: "/camera_depth"  # Contains the depth image
-    camera_info: "/camera_info"  # Contains the camera info
+    rgb_camera: "/camera/color/image_raw"  # Contains the rbgd image
+    depth_camera: "/camera/aligned_depth_to_color/image_raw"  # Contains the depth image
+    camera_info: "/camera/color/camera_info"  # Contains the camera info
     task: "/task"  # Contains information about the object and the task to be performed
-    transform_object_to_gripper: "/tf"  # Contains the object -> gripper transform
+    transform_robot_cam_to_selected_grasp: "/selected_grasp_marker"  # Contains the robot cam -> gripper transform
   published_topics:
     out_dir: "/out_dir"  # Contains the output directory path for saving results
-    transform_camera_to_gripper: "/target_tf"  # Contains the target camera -> gripper transform
+    transform_base_to_gripper: "/target_tf"  # Contains the target base -> gripper transform
   frame_ids:
-    camera: "camera_color_frame"  # Frame ID for the camera
-    gripper: "handover_pose"  # Frame ID for the gripper
+    base: "world"  # Frame ID for the robot base
+    camera: "camera_color_optical_frame"  # Frame ID for the camera
+    gripper: "selected_grasp"  # Frame ID for the gripper
 
 grasp_generator_client:
   server_name: "grasp_generator"  # Name of the ROS service to call
@@ -26,7 +27,9 @@ correspondence_estimator_client:
 hand_reconstructor_client:
   services:
     reconstruct_hand: "reconstruct_hand"  # Service to reconstruct the hand from a given image
+    reconstruct_hand_pose: "reconstruct_hand_pose"  # Service to reconstruct the hand pose from a given image
     estimate_camera: "estimate_camera"  # Service to estimate the camera parameters
+    render_hand: "render_hand"  # Service to render the reconstructed hand
 
 transform_estimator_client:
   server_name: "transform_estimator"  # Name of the ROS service to call
@@ -42,6 +45,8 @@ debug:
   log_config: true
   # If true, intermediate results from the initialization phase will be saved to the output directory.
   log_init_results: true
+  # If true, the target hand pose will be rendered in the object image for visualization..
+  visualize_target_hand_pose: true
   # If true, the camera topic will not be subscribed to, and example data will be used instead.
   bypass_camera_subscriber: true
   # If true, the task topic will not be subscribed to, and example data will be used instead.

@@ -62,6 +62,12 @@ def imgmsg_to_cv2(image_msg):
             (image_msg.height, image_msg.width)
         )
         return img
+    elif image_msg.encoding == "16UC1":
+        dtype = np.uint16
+        img = np.frombuffer(image_msg.data, dtype=dtype).reshape(
+            (image_msg.height, image_msg.width)
+        )
+        return img
     else:
         raise ValueError(f"Unsupported encoding: {image_msg.encoding}")
 
