@@ -4,12 +4,15 @@ body_detector: "regnety" # 'regnety' or "vitdet"
 rescale_factor: 2.0  # Padding around the detected boundary box for the hand
 body_detector_confidence_threshold: 0.5 
 hand_detector_confidence_threshold: 0.5
+focal_length: 500
 
 ros:
   node_name: "hand_reconstructor"  # Name of the ROS node
   provided_services:
     reconstruct_hand: "reconstruct_hand"  # Service to reconstruct the hand from a given image
+    reconstruct_hand_pose: "reconstruct_hand_pose"  # Service to reconstruct the hand pose from a given image
     estimate_camera: "estimate_camera"  # Service to estimate the camera parameters
+    render_hand: "render_hand"  # Service to render the reconstructed hand
 
 debug:
   # All output data will be saved to the output directory.
@@ -20,5 +23,6 @@ debug:
   log_config: true  # Log the configuration used for the pipeline
   log_detections: true  # Log the detected hand and body probabilities
   log_visualization:
+    reconstruct_hand_pose: true  # Log a visualization of the reconstructed hand pose for the reconstruction service
     reconstruct_hand: true  # Log a visualization of the reconstructed hand for the reconstruction service
     estimate_camera: true  # Log a visualization of the estimated camera parameters for the camera estimation service

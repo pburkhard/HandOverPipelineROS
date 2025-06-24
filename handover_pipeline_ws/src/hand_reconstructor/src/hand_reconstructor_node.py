@@ -72,6 +72,7 @@ class HandReconstructor:
         self.hamer, self.hamer_cfg = load_hamer(path)
         self.hamer = self.hamer.to(self.device)
         self.hamer.eval()
+        self.hamer_cfg.EXTRA.FOCAL_LENGTH = cfg.focal_length
 
         # Initialize the body detector (Needed to crop the hand region)
         if cfg.body_detector == "vitdet":
@@ -125,6 +126,11 @@ class HandReconstructor:
                     + f"{self.cfg.debug.out_dir_topic}"
                 )
                 rospy.sleep(1.0)
+            if not os.path.exists(self.out_dir):
+                rospy.logwarn(
+                    f"Output directory {self.out_dir} does not exist. Creating it."
+                )
+                os.makedirs(self.out_dir, exist_ok=True)
         else:
             rospy.logerr(
                 "Invalid out_dir_mode. Supported modes are 'fixed' and 'topic'."
