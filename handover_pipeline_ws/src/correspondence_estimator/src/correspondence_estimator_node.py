@@ -3,18 +3,18 @@ import actionlib
 import cv2
 from dotenv import load_dotenv
 import io
+from lang_sam import LangSAM
 import matplotlib.pyplot as plt
 import numpy as np
 from omegaconf import DictConfig, OmegaConf
 import os
 from PIL import Image as PILImage
-import torch
-from typing import Tuple, List
 import rospy
 import sys
+import torch
+from typing import Tuple, List
 import yaml
 
-from lang_sam import LangSAM
 
 from correspondence_estimator.msg import (
     EstimateCorrespondenceAction,
@@ -22,6 +22,10 @@ from correspondence_estimator.msg import (
     EstimateCorrespondenceFeedback,
     EstimateCorrespondenceGoal,
 )
+
+# TODO: Remove dependency on the pipeline package
+sys.path.append(os.path.join(os.path.dirname(__file__), "../../pipeline/src/"))
+from msg_utils import imgmsg_to_cv2, cv2_to_imgmsg
 
 from std_msgs.msg import String, Int32MultiArray, MultiArrayLayout, MultiArrayDimension
 from sensor_msgs.msg import Image
@@ -100,12 +104,8 @@ class CorrespondenceEstimator:
         image_2 = goal.image_2
 
         # Convert ROS Image data to numpy array
-        img1_data_original = np.frombuffer(image_1.data, dtype=np.uint8).reshape(
-                image_1.height, image_1.width, -1
-            )
-        img2_data_original = np.frombuffer(image_2.data, dtype=np.uint8).reshape(
-            image_2.height, image_2.width, -1
-        )
+        img1_data_original = imgmsg_to_cv2(image_1)
+        img2_data_original = imgmsg_to_cv2(image_2)
 
         # Save the original images if debug logging is enabled
         if self.cfg.debug.log_unprocessed_images:
@@ -147,12 +147,8 @@ class CorrespondenceEstimator:
         w2, h2 = image_2.width, image_2.height
 
         # Convert ROS Image data to numpy arrays
-        img1_data = np.frombuffer(image_1.data, dtype=np.uint8).reshape(
-            image_1.height, image_1.width, -1
-        )
-        img2_data = np.frombuffer(image_2.data, dtype=np.uint8).reshape(
-            image_2.height, image_2.width, -1
-        )
+        img1_data = imgmsg_to_cv2(image_1)
+        img2_data = imgmsg_to_cv2(image_2)
 
         # Save the images as required by the find_correspondences function
         image_path1 = os.path.join(self.out_dir, "(ce)_in1.png")
@@ -272,10 +268,8 @@ class CorrespondenceEstimator:
         # Convert list of sensor_msgs/Image to list of PIL Images
         pil_images = []
         for ros_img in images:
-            img_array = np.frombuffer(ros_img.data, dtype=np.uint8).reshape(
-                ros_img.height, ros_img.width, -1
-            )
-            img = PILImage.fromarray(img_array)
+            img_array = imgmsg_to_cv2(ros_img)
+            img = PILImage.fromarray(img_array[..., ::-1])  # Convert BGR to RGB
             pil_images.append(img)
         images = pil_images
 
@@ -326,17 +320,15 @@ class CorrespondenceEstimator:
             new_width = int(width * scale)
             new_height = int(height * scale)
             # Convert ROS Image to PIL Image, resize, then convert back
-            img_array = np.frombuffer(image.data, dtype=np.uint8).reshape(
-                height, width, -1
-            )
-            pil_img = PILImage.fromarray(img_array)
+            img_array = imgmsg_to_cv2(image)
+            pil_img = PILImage.fromarray(img_array[..., ::-1])  # Convert BGR to RGB
             resized_pil_img = pil_img.resize((new_width, new_height), PILImage.LANCZOS)
             # Convert back to ROS Image
             resized_ros_img = Image()
             resized_ros_img.header = image.header
             resized_ros_img.height = new_height
             resized_ros_img.width = new_width
-            resized_ros_img.encoding = image.encoding
+            resized_ros_img.encoding = "rgb8"
             resized_ros_img.step = new_width * 3
             resized_ros_img.data = resized_pil_img.tobytes()
             return resized_ros_img
@@ -372,9 +364,7 @@ class CorrespondenceEstimator:
                 pad_right = target_width - width - pad_left
                 pad_top = pad_bottom = 0
 
-            img_array = np.frombuffer(image.data, dtype=np.uint8).reshape(
-                height, width, -1
-            )
+            img_array = imgmsg_to_cv2(image)
             padded_img = cv2.copyMakeBorder(
                 img_array,
                 pad_top,
@@ -388,7 +378,7 @@ class CorrespondenceEstimator:
             padded_ros_img.header = image.header
             padded_ros_img.height = padded_img.shape[0]
             padded_ros_img.width = padded_img.shape[1]
-            padded_ros_img.encoding = image.encoding
+            padded_ros_img.encoding = "bgr8"  # OpenCV uses BGR format
             padded_ros_img.step = padded_ros_img.width * 3
             padded_ros_img.data = padded_img.tobytes()
             return padded_ros_img, [pad_top, pad_bottom, pad_left, pad_right]
