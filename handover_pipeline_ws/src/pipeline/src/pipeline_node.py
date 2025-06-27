@@ -15,19 +15,21 @@ from transform_estimation_client import TransformEstimationClient
 from msg_utils import (
     cv2_to_imgmsg,
     imgmsg_to_cv2,
+    multiarraymsg_to_np,
+    np_to_multiarraymsg,
     np_to_transformmsg,
     transformmsg_to_np,
-    np_to_multiarraymsg,
-    multiarraymsg_to_np,
+    transformmsg_to_posemsg_stamped,
 )
 
-from geometry_msgs.msg import Transform, TransformStamped
+from geometry_msgs.msg import Transform, TransformStamped, PoseStamped
 from sensor_msgs.msg import Image, CameraInfo
 from std_msgs.msg import String, Int32MultiArray
 from tf2_msgs.msg import TFMessage
 
-# from TODO.msg import Task
-from pipeline.msg import Task
+# from pipeline.msg import Task
+from custom_msg.msg import Task
+
 import tf2_ros
 from visualization_msgs.msg import Marker
 
@@ -87,6 +89,7 @@ class Pipeline:
     ### Main Loop Attributes
     ###########################################################################
     transform_publisher: rospy.Publisher = None
+    marker_publisher: rospy.Publisher = None
 
     def __init__(self, cfg: DictConfig):
         self.cfg = cfg
@@ -191,6 +194,13 @@ class Pipeline:
             queue_size=1,
         )
 
+        # Set up the marker publisher
+        self.marker_publisher = rospy.Publisher(
+            self.cfg.ros.published_topics.marker,
+            Marker,
+            queue_size=1,
+        )
+
         # Log the config
         if self.cfg.debug.log_config:
             config_path = os.path.join(self.out_dir, "main_config.yaml")
@@ -235,7 +245,7 @@ class Pipeline:
                 self.object_description is None or self.task_description is None
             ):
                 rospy.loginfo("Waiting for task description from topic...")
-                rospy.sleep(0.1)
+                rospy.sleep(1)
             rospy.loginfo("Task description received from topic.")
 
         # Get the selected grasp transform, the object image, object depth image, and the
@@ -249,7 +259,7 @@ class Pipeline:
                 and self.cfg.debug.bypass_transform_subscriber
             ):
                 rospy.logwarn(
-                    "Camera subscriber and transform subscriber must both be bypassed or both be active."
+                    "Camera subscriber and transform subscriber must both be bypassed or both be active. Bypassing both."
                 )
             rospy.loginfo(
                 "Bypassing camera subscriber. Using example image and camera info."
@@ -266,7 +276,7 @@ class Pipeline:
             # Depth image
             path = os.path.join(self.cfg.debug.example_dir, "object_image_depth.png")
             image = cv2.imread(path, cv2.IMREAD_UNCHANGED)
-            self.object_image_depth = cv2_to_imgmsg(image, encoding="mono8")
+            self.object_image_depth = cv2_to_imgmsg(image, encoding="16UC1")
             rospy.loginfo("Bypassing transform subscriber. Using example data.")
             # Load the example transform from a file
             transform_path = os.path.join(
@@ -286,7 +296,7 @@ class Pipeline:
                 rospy.loginfo(
                     "Waiting for transform from robot camera to selected grasp..."
                 )
-                rospy.sleep(0.1)
+                rospy.sleep(1)
             rospy.loginfo("Transform from robot camera to selected grasp received.")
 
         # Generate the grasp image
@@ -386,7 +396,7 @@ class Pipeline:
         if self.cfg.debug.visualize_target_hand_pose:
             # Visualize the hand pose in the object image
             if self.cfg.debug.bypass_hand_reconstructor:
-                rospy.logerr(
+                rospy.logwarn(
                     "Cannot visualize target hand pose in object image because the hand reconstructor is bypassed."
                 )
             else:
@@ -396,10 +406,7 @@ class Pipeline:
                 )
                 n_hands = estimation_dict["n_hands"]
 
-                # Transform the hand global orientation(s) to the object image frame
-                print(
-                    "hand_global_orient before", estimation_dict["hand_global_orient"]
-                )
+                # Get the hand global orientation(s) to the object image frame
                 hand_global_orient = estimation_dict["hand_global_orient"]
                 hand_global_orient_in_robot_cam = []
                 for i in range(n_hands):
@@ -415,10 +422,8 @@ class Pipeline:
                 estimation_dict["hand_global_orient"] = np.stack(
                     hand_global_orient_in_robot_cam, axis=0
                 )
-                print("hand_global_orient after", estimation_dict["hand_global_orient"])
 
-                # Transform the hand translation to the object image frame
-                print("translation before", estimation_dict["pred_cam_t_global"])
+                # Get the hand translation(s) in the object image frame
                 cam_t = estimation_dict["pred_cam_t_global"]
                 cam_t_in_robot_cam = []
                 for i in range(n_hands):
@@ -433,20 +438,11 @@ class Pipeline:
                 estimation_dict["pred_cam_t_global"] = np.stack(
                     cam_t_in_robot_cam, axis=0
                 )
-                print("translation after", estimation_dict["pred_cam_t_global"])
 
                 # Extract the focal length from the camera info
-                print(
-                    f"scaled focal length before: {estimation_dict['scaled_focal_length']}"
-                )
                 K = np.array(self.object_camera_info.K).reshape(3, 3)
-                scaled_focal_length = (K[0, 0] + K[1, 1]) / 2.0  # Average focal length
-                estimation_dict["scaled_focal_length"] = np.tile(
-                    scaled_focal_length, n_hands
-                )
-                print(
-                    f"scaled focal length after: {estimation_dict['scaled_focal_length']}"
-                )
+                focal_length = (K[0, 0] + K[1, 1]) / 2.0  # Average focal length
+                estimation_dict["scaled_focal_length"] = np.tile(focal_length, n_hands)
 
                 # call the renderer
                 out_image = self.hand_reconstructor_client.render_hand(
@@ -461,17 +457,6 @@ class Pipeline:
                 rospy.loginfo(
                     f"Target hand pose in object image saved to {out_image_path}"
                 )
-        # (trans,rot)= self.tf_listener.lookupTransform("camera_color_optical_frame",
-        #     "selected_grasp",
-        #     rospy.Time(0))
-        # translation = np.array(trans)
-        # rotation = np.array(rot)
-        # self.transform_robot_cam_to_selected_grasp = tf.transformations.quaternion_matrix(rotation)
-        # self.transform_robot_cam_to_selected_grasp[:3, 3] = translation
-        # self.transform_hand_pose_to_selected_grasp = self._concat_transforms(
-        #     self.transform_robot_cam_to_hand_pose, self.transform_robot_cam_to_selected_grasp
-        # )
-
         # dump all results to the output directory
         if self.cfg.debug.log_init_results:
             self._dump_results()
@@ -500,9 +485,42 @@ class Pipeline:
         try:
             while not rospy.is_shutdown():
                 # Store the rbg image and depth image in a variable to make sure they are synchronized
-                object_image = self.latest_object_image
-                object_image_depth = self.latest_object_image_depth
-                object_camera_info = self.latest_object_camera_info
+                if self.cfg.debug.bypass_camera_subscriber:
+                    rospy.loginfo(
+                        f"[it {i:04d}] Bypassing camera subscriber. Using example data."
+                    )
+                    # Camera info
+                    path = os.path.join(self.cfg.debug.example_dir, "K_live.npy")
+                    K_live = np.load(path)
+                    live_camera_info = CameraInfo()
+                    live_camera_info.K = K_live.flatten().tolist()
+                    # RGB image
+                    path = os.path.join(self.cfg.debug.example_dir, "live_image.png")
+                    live_image_np = cv2.imread(path)
+                    live_image = cv2_to_imgmsg(live_image_np, encoding="bgr8")
+                    # Depth image
+                    path = os.path.join(
+                        self.cfg.debug.example_dir, "live_image_depth.png"
+                    )
+                    live_image_depth_np = cv2.imread(path, cv2.IMREAD_UNCHANGED)
+                    live_image_depth = cv2_to_imgmsg(
+                        live_image_depth_np, encoding="16UC1"
+                    )
+                else:
+                    # Wait for the latest object image and depth image to be available
+                    while not rospy.is_shutdown() and (
+                        self.latest_object_image is None
+                        or self.latest_object_image_depth is None
+                        or self.latest_object_camera_info is None
+                    ):
+                        rospy.loginfo(
+                            f"[it {i:04d}] Waiting for latest camera image and info..."
+                        )
+                        rospy.sleep(1)
+
+                    live_image = self.latest_object_image
+                    live_image_depth = self.latest_object_image_depth
+                    live_camera_info = self.latest_object_camera_info
 
                 if self.cfg.debug.bypass_hand_reconstructor:
                     rospy.loginfo(
@@ -518,57 +536,96 @@ class Pipeline:
                         f"[it {i:04d}] Estimating transform from camera to hand..."
                     )
                     # Estimate the hand orientation and 2D keypoints in the object image
-                    hand_orient, keypoints_2d = (
+                    hand_orient_transform, keypoints_2d = (
                         self.hand_reconstructor_client.reconstruct_hand_pose(
-                            image=object_image
+                            image=live_image
                         )
                     )
-                    # Calculate the translation from the camera to the hand
-                    K = np.array(object_camera_info.K, dtype=np.float64).reshape(3, 3)
-                    depth = imgmsg_to_cv2(object_image_depth, desired_encoding="mono8")
+                    if hand_orient_transform is None or keypoints_2d is None:
+                        rospy.logwarn(f"[it {i:04d}] Could not reconstruct hand pose")
+                        continue  # Restart the loop iteration
+                    if keypoints_2d.layout.dim[0].size == 0:
+                        rospy.logwarn(f"[it {i:04d}] No keypoints detected.")
+                        continue  # Skip this iteration if no keypoints are found
+
+                    # clip the keypoints_2d to the image size
+                    keypoints_2d_np = multiarraymsg_to_np(keypoints_2d)
+                    keypoints_2d_np[:, 0] = np.clip(
+                        keypoints_2d_np[:, 0], 0, live_image_depth.width - 1
+                    )
+                    keypoints_2d_np[:, 1] = np.clip(
+                        keypoints_2d_np[:, 1], 0, live_image_depth.height - 1
+                    )
+
+                    # Extract the 3D values using the depth image
+                    K = np.array(live_camera_info.K, dtype=np.float64).reshape(3, 3)
+                    depth = imgmsg_to_cv2(live_image_depth)
                     keypoints_3d = self._points_2D_to_3D(
                         intrinsic_matrix=K,
                         depth_image=depth,
-                        points_2D=multiarraymsg_to_np(keypoints_2d),
+                        points_2D=keypoints_2d_np,
                     )
+
+                    # Calculate the translation from the camera to the hand
                     translation_np = np.mean(keypoints_3d, axis=0)  # Take the average
+
                     # Create the transform from camera to hand
+                    transform_camera_to_hand = Transform()
                     transform_camera_to_hand.translation.x = translation_np[0]
                     transform_camera_to_hand.translation.y = translation_np[1]
                     transform_camera_to_hand.translation.z = translation_np[2]
-                    transform_camera_to_hand.rotation = hand_orient
+                    transform_camera_to_hand.rotation = hand_orient_transform.rotation
 
                 # Calculate the transform from base to gripper
                 transform_base_to_camera = self._get_transform(
                     self.cfg.ros.frame_ids.base, self.cfg.ros.frame_ids.camera
                 )
+                if cfg.debug.use_hand_pose_as_target:
+                    # Use the hand pose as the target gripper pose
+                    target_transform = self._concat_transforms(
+                        transform_base_to_camera,
+                        transform_camera_to_hand,
+                    )
+                else:
+                    target_transform = self._concat_transforms(
+                        transform_base_to_camera,
+                        transform_camera_to_hand,
+                        self.transform_hand_pose_to_selected_grasp,
+                    )
+                if self.cfg.debug.log_verbose:
+                    rospy.loginfo(
+                        f"[it {i:04d}] Transform from camera to hand:\n{transform_camera_to_hand}"
+                    )
+                    rospy.loginfo(f"[it {i:04d}] Target transform:\n{target_transform}")
 
-                transform_base_to_gripper = self._concat_transforms(
-                    transform_base_to_camera,
-                    transform_camera_to_hand,
-                    self.transform_hand_pose_to_selected_grasp,
-                )
-
-                # Publish the transform from camera to gripper
+                # Publish the transform from base to gripper
                 tf_msg = TFMessage()
-                transform_stamped = TransformStamped()
-                transform_stamped.header.seq = i
-                transform_stamped.transform = transform_base_to_gripper
-                transform_stamped.header.frame_id = self.cfg.ros.frame_ids.camera
-                transform_stamped.child_frame_id = self.cfg.ros.frame_ids.gripper
-                transform_stamped.header.stamp = rospy.Time.now()
-                tf_msg.transforms.append(transform_stamped)
+                target_transform_stamped = TransformStamped()
+                target_transform_stamped.header.seq = i
+                target_transform_stamped.transform = target_transform
+                target_transform_stamped.header.frame_id = self.cfg.ros.frame_ids.base
+                target_transform_stamped.child_frame_id = self.cfg.ros.frame_ids.gripper
+                target_transform_stamped.header.stamp = rospy.Time.now()
+                tf_msg.transforms.append(target_transform_stamped)
                 try:
                     self.transform_publisher.publish(tf_msg)
-                    rospy.loginfo(
-                        f"[it {i:04d}] Published transform from camera to gripper."
-                    )
+                    rospy.loginfo(f"[it {i:04d}] Published target transform.")
                 except Exception as e:
                     rospy.logerr(
                         f"[it {i:04d}] Failed to publish transform from camera to gripper: {e}"
                     )
+
+                # Publish a marker for the gripper pose
+                if self.cfg.debug.publish_marker:
+                    pose = transformmsg_to_posemsg_stamped(target_transform_stamped)
+
+                    self._mark_grasp(
+                        pose=pose,
+                        id=i,
+                        camera_frame=self.cfg.ros.frame_ids.camera,
+                    )
+                    rospy.loginfo(f"[it {i:04d}] Published marker for gripper pose.")
                 i += 1
-                rospy.sleep(1)  # TODO: Remove this
         except Exception as e:
             rospy.loginfo(f"Main loop interrupted with exception: {e}")
 
@@ -589,7 +646,7 @@ class Pipeline:
 
         while not rospy.is_shutdown():
             timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-            out_dir = os.path.join(self.cfg.debug.out_dir, timestamp)
+            out_dir = os.path.join(base_dir, timestamp)
             if not os.path.exists(out_dir):
                 os.makedirs(out_dir)
                 rospy.loginfo(f"Output directory created: {out_dir}")
@@ -699,6 +756,33 @@ class Pipeline:
 
         return np.array(points_3D)
 
+    def _mark_grasp(self, pose: PoseStamped, id: int, camera_frame: str) -> None:
+        """Mark the target gripper pose in the camera frame using a panda gripper mesh.
+
+        Args:
+            pose (PoseStamped): The gripper pose.
+            id (int): The ID of the marker.
+            camera_frame (str): The frame ID of the camera.
+        """
+        pose.header.stamp = rospy.Time(0)  # Avoid time issues with the transform
+        pose = self.tf_listener.transformPose(camera_frame, pose)
+        marker = Marker()
+        marker.header = pose.header
+        marker.pose = pose.pose
+        marker.ns = "trajectory"
+        marker.id = int(id)
+        marker.type = Marker.MESH_RESOURCE
+        marker.mesh_resource = "package://grasp_execution/assets/franka_hand.stl"
+        marker.action = Marker.ADD
+        marker.scale.x = 1
+        marker.scale.y = 1
+        marker.scale.z = 1
+        marker.color.a = 0.8
+        marker.color.r = 1.0
+        marker.color.b = 1.0
+        marker.color.g = 1.0
+        self.marker_publisher.publish(marker)
+
     def _dump_results(self):
         """
         Save the results of the pipeline to the output directory specified in the configuration.
@@ -766,11 +850,11 @@ class Pipeline:
         # Save the correspondence points if available
         if self.corr_points_object is not None and self.corr_points_grasp is not None:
             np.save(
-                os.path.join(self.out_dir, "object_points.npy"),
+                os.path.join(self.out_dir, "corr_points_object.npy"),
                 np.array(self.corr_points_object.data).reshape(-1, 2),
             )
             np.save(
-                os.path.join(self.out_dir, "grasp_points.npy"),
+                os.path.join(self.out_dir, "corr_points_grasp.npy"),
                 np.array(self.corr_points_grasp.data).reshape(-1, 2),
             )
         else:
@@ -845,8 +929,8 @@ class Pipeline:
             msg (Task): The message received from the task topic containing the object
                 and task description.
         """
-        self.object_description = msg.tool
-        self.task_description = msg.task
+        self.object_description = String(msg.tool)
+        self.task_description = String(msg.action)
         # rospy.loginfo("Received object and task description from task topic.")
 
     def _rgb_camera_callback(self, msg: Image):

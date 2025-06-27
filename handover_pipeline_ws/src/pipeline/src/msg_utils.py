@@ -1,7 +1,7 @@
 import numpy as np
 import tf.transformations
 
-from geometry_msgs.msg import Transform
+from geometry_msgs.msg import Transform, Pose, TransformStamped, PoseStamped
 from sensor_msgs.msg import Image
 from std_msgs.msg import Int32MultiArray, MultiArrayDimension
 
@@ -24,7 +24,7 @@ def cv2_to_imgmsg(image, encoding="bgr8"):
         1
         if (
             image.dtype.byteorder == ">"
-            or (image.dtype.byteorder == "=" and np.byteorder == "big")
+            or (image.dtype.byteorder == "=" and image.dtype.name == "big")
         )
         else 0
     )
@@ -191,3 +191,43 @@ def transformmsg_to_np(transform_msg: Transform):
     rotation_matrix[:3, 3] = translation
 
     return rotation_matrix
+
+
+def transformmsg_to_posemsg(transform_msg: Transform):
+    """
+    Convert a ROS Transform message to a Pose message.
+
+    Args:
+        transform_msg (Transform): The ROS Transform message to convert.
+
+    Returns:
+        geometry_msgs.msg.Pose: A Pose message representing the transformation.
+    """
+
+    pose_msg = Pose()
+    pose_msg.position.x = transform_msg.translation.x
+    pose_msg.position.y = transform_msg.translation.y
+    pose_msg.position.z = transform_msg.translation.z
+    pose_msg.orientation = transform_msg.rotation
+
+    return pose_msg
+
+
+def transformmsg_to_posemsg_stamped(transform_stamped: TransformStamped):
+    """
+    Convert a ROS TransformStamped message to a PoseStamped message.
+
+    Args:
+        transform_stamped (TransformStamped): The ROS TransformStamped message to convert.
+
+    Returns:
+        geometry_msgs.msg.PoseStamped: A PoseStamped message representing the transformation.
+    """
+    pose_stamped = PoseStamped()
+    pose_stamped.header = transform_stamped.header
+    pose_stamped.pose.position.x = transform_stamped.transform.translation.x
+    pose_stamped.pose.position.y = transform_stamped.transform.translation.y
+    pose_stamped.pose.position.z = transform_stamped.transform.translation.z
+    pose_stamped.pose.orientation = transform_stamped.transform.rotation
+
+    return pose_stamped

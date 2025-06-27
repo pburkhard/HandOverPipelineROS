@@ -1,2 +1,3 @@
-std_msgs/String tool  # Object description
-std_msgs/String task  # Task description
+#Message for defining a task
+string tool
+string action

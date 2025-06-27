@@ -9,8 +9,9 @@ ros:
   published_topics:
     out_dir: "/out_dir"  # Contains the output directory path for saving results
     transform_base_to_gripper: "/target_tf"  # Contains the target base -> gripper transform
+    marker: "/target_grasp_marker"  # Contains the marker for visualization
   frame_ids:
-    base: "world"  # Frame ID for the robot base
+    base: "panda_link0"  # Frame ID for the robot base
     camera: "camera_color_optical_frame"  # Frame ID for the camera
     gripper: "selected_grasp"  # Frame ID for the gripper
 
@@ -40,7 +41,7 @@ debug:
   # All output data will be saved in a folder in this base directory.
   out_dir: "/Handover_Pipeline/outputs/"
   # Directory from which example data will be loaded.
-  example_dir: "/Handover_Pipeline/input/examples/01_bottle/"
+  example_dir: "/Handover_Pipeline/input/examples/02_hammer"
   # If true, the configuration used for the pipeline will be logged.
   log_config: true
   # If true, intermediate results from the initialization phase will be saved to the output directory.
@@ -62,4 +63,10 @@ debug:
   # If true, the object -> gripper transform subscriber will not be used, and example data will be used instead.
   bypass_transform_subscriber: true
   # If true, the node will just run the initialization phase and exit.
-  skip_main_loop: true
+  skip_main_loop: false
+  # If true, the target pose is set equal to the hand pose, effectively ignoring the transform calculated during the initialization phase.
+  use_hand_pose_as_target: false
+  # If true, the main loop will publish a marker additional to the target transform for visualization.
+  publish_marker: true
+  # If true, verbose information will be logged during the main loop execution.
+  log_verbose: true

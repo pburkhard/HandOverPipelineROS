@@ -87,6 +87,9 @@ class HandReconstructorClient:
 
         try:
             response: ReconstructHandPoseResponse = self._reconstr_hand_pose_client(request)
+            if not response.success:
+                rospy.logerr("Hand pose reconstruction failed.")
+                return None, None
             rospy.loginfo("Hand pose reconstruction completed successfully.")
             return (response.transform_camera_to_hand, response.keypoints_2d)
         except rospy.ServiceException as e:
