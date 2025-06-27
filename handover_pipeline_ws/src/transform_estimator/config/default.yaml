@@ -14,3 +14,4 @@ debug:
   log_3d_points: True  # log the estimated 3D correspondence points
   log_optimization_results: True  # log verbose optimization results
   log_visualization: True  # log visualization of the transform
+  log_verbose: True  # log verbose information during the execution

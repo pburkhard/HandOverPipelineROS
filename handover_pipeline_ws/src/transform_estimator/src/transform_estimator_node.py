@@ -109,8 +109,23 @@ class TransformEstimator:
         # Lift the 2D points from the object camera frame into the 3D space
         corr_points_object_3D = self.get_3D_points(
             K_object, object_image_depth, corr_points_object
-        )
-        rospy.loginfo("Lifted object points to 3D space.")
+        )  # Values are in meters
+        if self.cfg.debug.log_verbose:
+            rospy.loginfo(
+                f"Extracted 3D points of object (in meters):\n{corr_points_object_3D}"
+            )
+
+        # The depth image can be corrupted, cause some 3D points being zero, filter those out
+        valid_idx = np.any(corr_points_object_3D != 0, axis=1)
+        corr_points_grasp = corr_points_grasp[valid_idx]
+        corr_points_object = corr_points_object[valid_idx]
+        corr_points_object_3D = corr_points_object_3D[valid_idx]
+        if valid_idx.shape[0] != corr_points_object.shape[0]:
+            rospy.logwarn(
+                f"Filtered out correspondence points due to corrupted depth image. {corr_points_object.shape[0]} points remaining."
+            )
+
+        rospy.loginfo("Extracted object points in 3D")
         if self.cfg.debug.log_3d_points:
             path = os.path.join(self.out_dir, "(te)_corr_points_object_3D.npy")
             np.save(path, corr_points_object_3D)
@@ -129,7 +144,7 @@ class TransformEstimator:
 
         # Reconstruct the 3D points in the grasp frame
         corr_points_grasp_3D, cost = self.reconstruct_3d_points(
-            K_grasp, corr_points_grasp, relative_distances
+            K_grasp, corr_points_grasp, relative_distances, corr_points_object_3D
         )
         rospy.loginfo(f"Reconstructed grasp points in 3D space with cost: {cost:.4f}")
         if self.cfg.debug.log_3d_points:
@@ -143,6 +158,10 @@ class TransformEstimator:
                 points_2D=corr_points_grasp,
                 output_path=path,
             )
+        if self.cfg.debug.log_verbose:
+            rospy.loginfo(
+                f"Reconstructed 3D points in grasp frame (in meters):\n{corr_points_grasp_3D}"
+            )
 
         # Estimate the transformation matrix
         self._feedback.status = "Estimating transformation matrix..."
@@ -152,6 +171,10 @@ class TransformEstimator:
             corr_points_grasp_3D,
             corr_points_object_3D,
         )
+        if self.cfg.debug.log_verbose:
+            rospy.loginfo(
+                f"Estimated transformation matrix (grasp to object frame):\n{transformation}"
+            )
         if self.cfg.debug.log_visualization:
             path = os.path.join(self.out_dir, "(te)_transformation_visualization.png")
             self.save_transform_visualization(
@@ -159,6 +182,8 @@ class TransformEstimator:
                 target_points=corr_points_object_3D,
                 transformation_matrix=transformation,
                 output_path=path,
+                source_label="Reconstructed Grasp Points",
+                target_label="Object Points",
             )
 
         # Publish feedback
@@ -193,6 +218,7 @@ class TransformEstimator:
         # Create correspondences explicitly (point i in source corresponds to point i in target)
         correspondences = np.array([(i, i) for i in range(len(source_points))])
 
+        # TODO: Implement RANSAC if necessary
         transformation = open3d.pipelines.registration.TransformationEstimationPointToPoint().compute_transformation(
             source, target, open3d.utility.Vector2iVector(correspondences)
         )
@@ -204,6 +230,7 @@ class TransformEstimator:
         intrinsic_matrix: np.ndarray,
         image_points: np.ndarray,
         relative_distances: dict,
+        initial_points_3D: np.ndarray = None,
     ) -> tuple[np.ndarray, float]:
         """
         Reconstructs 3D points from 2D image points using a pinhole camera model.
@@ -216,6 +243,8 @@ class TransformEstimator:
             relative_distances (dict): Dictionary with keys as tuples of point
                 indices and values as distances.
                 Example: {(0, 1): 2.0, (1, 2): 3.0}
+            initial_points_3D (np.ndarray): Nx3 array containing the inital
+                3D coordinates for the optimization.
         Returns:
             np.ndarray: Nx3 array of reconstructed 3D points.
             float: Final cost of the optimization.
@@ -223,18 +252,18 @@ class TransformEstimator:
         n_points = len(image_points)
         normalized_points = self._pixel_to_normalized(intrinsic_matrix, image_points)
 
-        # Initial guess: points at different depths along rays from camera center.
-        # TODO: Initialize with measured depths
-        initial_depths = np.linspace(1, 10, n_points)
-        initial_points_3d = np.zeros((n_points, 3))
-        for i in range(n_points):
-            initial_points_3d[i] = (
-                np.array([normalized_points[i, 0], normalized_points[i, 1], 1])
-                * initial_depths[i]
-            )
+        # Initial guess
+        if initial_points_3D is None:
+            initial_depths = np.linspace(1, 10, n_points)
+            initial_points_3D = np.empty((n_points, 3))
+            for i in range(n_points):
+                initial_points_3D[i] = (
+                    np.array([normalized_points[i, 0], normalized_points[i, 1], 1])
+                    * initial_depths[i]
+                )
 
         # Flatten to 1D array for optimization: (x1, y1, z1, x2, y2, z2, ...)
-        initial_params = initial_points_3d.flatten()
+        initial_params = initial_points_3D.flatten()
 
         def _reprojection_cost(points_3d):
             # Cost for reprojection error -> Project 3d points back to a fictional
@@ -312,6 +341,7 @@ class TransformEstimator:
         intrinsic_matrix: np.ndarray,
         depth_image: np.ndarray,
         points_2D: np.ndarray,
+        average_around_patch=False,
     ) -> np.ndarray:
         """
         Get the 3D points corresponding to the given 2D points using the depth image
@@ -322,9 +352,12 @@ class TransformEstimator:
             depth_image (np.ndarray): Depth image of shape (H,W) where each pixel
                 value is the depth in millimeters.
             points_2D (np.ndarray): Nx2 array of 2D points in pixel coordinates.
+            average_around_patch (bool): Whether to average the depth value around a
+                patch of 3x3 pixels in the depth image.
 
         Returns:
-            np.ndarray (shape (n,3)): 3D points corresponding to the 2D points.
+            np.ndarray (shape (n,3)): 3D points corresponding to the 2D points. All
+            values are in meters.
         """
 
         if depth_image.ndim != 2:
@@ -336,11 +369,33 @@ class TransformEstimator:
         cx = intrinsic_matrix[0, 2]
         cy = intrinsic_matrix[1, 2]
 
+        h, w = depth_image.shape
+
         # Get the 3D points
         points_3D = []
         for point in points_2D:
-            x, y = point
-            Z = depth_image[int(y), int(x)] / 1000.0  # Convert to meters
+            y, x = point
+            if average_around_patch:
+                # Average around 3x3 grid
+                Z_values = np.array(
+                    [
+                        depth_image[max(int(y) - 1, 0), max(int(x) - 1, 0)],
+                        depth_image[max(int(y) - 1, 0), int(x)],
+                        depth_image[max(int(y) - 1, 0), min(int(x) + 1, w - 1)],
+                        depth_image[int(y), max(int(x) - 1, 0)],
+                        depth_image[int(y), int(x)],
+                        depth_image[int(y), min(int(x) + 1, w - 1)],
+                        depth_image[min(int(y) + 1, h - 1), max(int(x) - 1, 0)],
+                        depth_image[min(int(y) + 1, h - 1), int(x)],
+                        depth_image[min(int(y) + 1, h - 1), min(int(x) + 1, w - 1)],
+                    ]
+                )
+                # Filter out invalid values
+                Z_values = Z_values[Z_values != 0].astype(np.float32)
+                Z = np.mean(Z_values) * 0.001  # Convert to meters
+                Z = 0.0 if np.isnan(Z) else Z
+            else:
+                Z = depth_image[int(y), int(x)] * 0.001
             X = (x - cx) * Z / fx
             Y = (y - cy) * Z / fy
             points_3D.append([X, Y, Z])
@@ -365,9 +420,11 @@ class TransformEstimator:
         Returns:
             np.ndarray: Nx2 array of normalized coordinates.
         """
-        normalized_points = np.zeros_like(image_points)
+        # We want float coordinates in the end
+        image_points = image_points.astype(np.float32)
+        normalized_points = np.empty_like(image_points)
         for i in range(len(image_points)):
-            x, y = image_points[i]
+            y, x = image_points[i]
             fx = intrinsic_matrix[0, 0]
             fy = intrinsic_matrix[1, 1]
             cx = intrinsic_matrix[0, 2]
@@ -425,7 +482,8 @@ class TransformEstimator:
         Args:
             intrinsic_matrix (np.ndarray): 3x3 intrinsic camera matrix.
             points_2D (np.ndarray): Nx2 array of points in pixel coordinates.
-              The origin is at the top left corner of the image.
+              The origin is at the top left corner of the image, the first entry
+              describes the heigh coordinate and the second one the width
             points_3D (np.ndarray): Nx3 array of the corresponding 3D coordinates.
 
         Returns:
@@ -458,7 +516,7 @@ class TransformEstimator:
         # Convert pixel coordinates to normalized image coordinates (focal length = z_image_plane)
         points_2D_projected = np.zeros_like(points_2D)
         for i in range(len(points_2D)):
-            x, y = points_2D[i]
+            y, x = points_2D[i]
             points_2D_projected[i, 0] = (x - cx) / fx * z_img_plane
             points_2D_projected[i, 1] = (y - cy) / fy * z_img_plane
 
@@ -590,9 +648,8 @@ class TransformEstimator:
 
     def visualize_3d_reconstruction(
         self,
-        intrinstic_matrix: np.ndarray,
+        intrinsic_matrix: np.ndarray,
         points_3D: np.ndarray,
-        reconstructed_points_3D: np.ndarray,
         points_2D: np.ndarray,
     ):
         """
@@ -606,11 +663,7 @@ class TransformEstimator:
             points_2D (np.ndarray): Nx2 array of 2D image points.
         """
 
-        _, ax = self._plot_camera_model(
-            intrinstic_matrix, points_2D, reconstructed_points_3D
-        )
-        self._plot_3D_points(points_3D, label="Original Points", ax=ax)
-        ax.set_title("3D point reconstruction")
+        _, ax = self._plot_camera_model(intrinsic_matrix, points_2D, points_3D)
         plt.show()
 
     def save_3d_reconstruction_visualization(
@@ -634,17 +687,19 @@ class TransformEstimator:
         base, ext = os.path.splitext(output_path)
         _, ax = self._plot_camera_model(intrinsic_matrix, points_2D, points_3D)
         plt.savefig(output_path)
-        ax.view_init(elev=0, azim=0)
+        ax.view_init(elev=0, azim=-90)
         plt.savefig(f"{base}_top_view{ext}")
-        ax.view_init(elev=-90, azim=-90)
-        plt.savefig(f"{base}_front_view{ext}")
+        ax.view_init(elev=-90, azim=90, roll=180)
+        plt.savefig(f"{base}_camera_view{ext}")
         plt.close()
 
-    def visualize(
+    def visualize_transform(
         self,
         source_points: np.ndarray,
         target_points: np.ndarray,
         transformation_matrix: np.ndarray,
+        source_label: str = None,
+        target_label: str = None,
     ):
         """
         Visualizes the transformed source point alongside the actual target points
@@ -654,15 +709,18 @@ class TransformEstimator:
             source_points (np.ndarray): Nx3 array of 3D points in the source frame.
             target_points (np.ndarray): Nx3 array of 3D points in the target frame.
             transformation_matrix (np.ndarray): 4x4 transformation matrix.
+            source_label (str): Label of the source points.
+            target_label (str): Label of the target points.
         """
-
+        if not source_label:
+            source_label = "Transformed Source Points"
+        if not target_label:
+            target_label = "Transformed Target Points"
         transformed_points = self._apply_transformation(
             source_points, transformation_matrix
         )
-        ax = self._plot_3D_points(
-            transformed_points, color="red", label="Transformed Source Points"
-        )
-        self._plot_3D_points(target_points, color="blue", label="Target Points", ax=ax)
+        ax = self._plot_3D_points(transformed_points, color="red", label=source_label)
+        self._plot_3D_points(target_points, color="blue", label=target_label, ax=ax)
         plt.title("Transformation Estimation")
         plt.show()
 
@@ -672,6 +730,8 @@ class TransformEstimator:
         target_points: np.ndarray,
         transformation_matrix: np.ndarray,
         output_path: str,
+        source_label: str = None,
+        target_label: str = None,
     ):
         """
         Saves the visualization of the transformed source point alongside the actual
@@ -682,15 +742,19 @@ class TransformEstimator:
             target_points (np.ndarray): Nx3 array of 3D points in the target frame.
             transformation_matrix (np.ndarray): 4x4 transformation matrix.
             output_path (str): Path to save the visualization.
+            source_label (str): Label of the source points.
+            target_label (str): Label of the target points.
         """
 
+        if not source_label:
+            source_label = "Transformed Source Points"
+        if not target_label:
+            target_label = "Transformed Target Points"
         transformed_points = self._apply_transformation(
             source_points, transformation_matrix
         )
-        ax = self._plot_3D_points(
-            transformed_points, color="red", label="Transformed Source Points"
-        )
-        self._plot_3D_points(target_points, color="blue", label="Target Points", ax=ax)
+        ax = self._plot_3D_points(transformed_points, color="red", label=source_label)
+        self._plot_3D_points(target_points, color="blue", label=target_label, ax=ax)
         plt.title("Transformation Estimation")
         plt.savefig(output_path)
         plt.close()
