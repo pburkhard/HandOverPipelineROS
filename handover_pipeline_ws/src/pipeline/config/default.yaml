@@ -37,6 +37,10 @@ transform_estimator_client:
   ros:
     timeout: 100  # Timeout for the service call in seconds
 
+# If true, run the correspondence estimator twice, once with the original object image and once with a mirrored version of the image.
+# The one with the lower mean squared error at the transform estimation will be used.
+try_mirrored_image: true  
+
 debug:
   # All output data will be saved in a folder in this base directory.
   out_dir: "/Handover_Pipeline/outputs/"

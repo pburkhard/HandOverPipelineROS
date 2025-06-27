@@ -25,7 +25,7 @@ from correspondence_estimator.msg import (
 
 # TODO: Remove dependency on the pipeline package
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../pipeline/src/"))
-from msg_utils import imgmsg_to_cv2, cv2_to_imgmsg
+from msg_utils import imgmsg_to_cv2
 
 from std_msgs.msg import String, Int32MultiArray, MultiArrayLayout, MultiArrayDimension
 from sensor_msgs.msg import Image
@@ -80,6 +80,8 @@ class CorrespondenceEstimator:
             with open(config_path, "w") as f:
                 OmegaConf.save(config=self.cfg, f=f.name)
 
+        self.n_requests = 0  # Keep track of the number of requests
+
         self._server.start()
         rospy.loginfo(f"{cfg.ros.node_name} action server started.")
 
@@ -100,6 +102,7 @@ class CorrespondenceEstimator:
             self._server.set_aborted()
             return
 
+        self.n_requests += 1
         image_1 = goal.image_1
         image_2 = goal.image_2
 
@@ -110,8 +113,12 @@ class CorrespondenceEstimator:
         # Save the original images if debug logging is enabled
         if self.cfg.debug.log_unprocessed_images:
             # Save the images using OpenCV
-            path_1 = os.path.join(self.out_dir, "(ce)_in1_unprocessed.png")
-            path_2 = os.path.join(self.out_dir, "(ce)_in2_unprocessed.png")
+            path_1 = os.path.join(
+                self.out_dir, f"(ce)_in1_unprocessed_{self.n_requests:04d}.png"
+            )
+            path_2 = os.path.join(
+                self.out_dir, f"(ce)_in2_unprocessed_{self.n_requests:04d}.png"
+            )
             cv2.imwrite(path_1, img1_data_original)
             cv2.imwrite(path_2, img2_data_original)
 
@@ -151,8 +158,8 @@ class CorrespondenceEstimator:
         img2_data = imgmsg_to_cv2(image_2)
 
         # Save the images as required by the find_correspondences function
-        image_path1 = os.path.join(self.out_dir, "(ce)_in1.png")
-        image_path2 = os.path.join(self.out_dir, "(ce)_in2.png")
+        image_path1 = os.path.join(self.out_dir, f"(ce)_in1_{self.n_requests:04d}.png")
+        image_path2 = os.path.join(self.out_dir, f"(ce)_in2_{self.n_requests:04d}.png")
         cv2.imwrite(image_path1, img1_data)
         cv2.imwrite(image_path2, img2_data)
 
@@ -215,7 +222,8 @@ class CorrespondenceEstimator:
                 PILImage.fromarray(img2_data_original[..., ::-1]),  # Convert BGR to RGB
                 self.out_dir,
                 postfix="_remapped",
-                title=f"Correspondences for {goal.object_description}",)
+                title=f"Correspondences for {goal.object_description}",
+            )
 
         # Convert the points to ROS Int32MultiArrays
         points1 = points1.astype(np.int32)
@@ -421,10 +429,10 @@ class CorrespondenceEstimator:
         ax1 = fig1.axes[0]
         ax2 = fig2.axes[0]
         for i in range(len(points1_tuples)):
-            y1,x1 = points1_tuples[i]
-            y2,x2 = points2_tuples[i]
-            ax1.text(x1,y1, f"p{i}", color="red", fontsize=12)
-            ax2.text(x2,y2, f"p{i}", color="red", fontsize=12)
+            y1, x1 = points1_tuples[i]
+            y2, x2 = points2_tuples[i]
+            ax1.text(x1, y1, f"p{i}", color="red", fontsize=12)
+            ax2.text(x2, y2, f"p{i}", color="red", fontsize=12)
 
         # Create a new figure for side-by-side display
         fig1_size = fig1.get_size_inches()
@@ -499,13 +507,20 @@ class CorrespondenceEstimator:
             points1, points2, image1, image2, title
         )
         fig1.savefig(
-            os.path.join(output_dir, f"(ce)_out1{postfix}.png"), bbox_inches="tight", pad_inches=0
+            os.path.join(output_dir, f"(ce)_out1{postfix}_{self.n_requests:04d}.png"),
+            bbox_inches="tight",
+            pad_inches=0,
         )
         fig2.savefig(
-            os.path.join(output_dir, f"(ce)_out2{postfix}.png"), bbox_inches="tight", pad_inches=0
+            os.path.join(output_dir, f"(ce)_out2{postfix}_{self.n_requests:04d}.png"),
+            bbox_inches="tight",
+            pad_inches=0,
         )
         combined_fig.savefig(
-            os.path.join(output_dir, f"(ce)_out_combined{postfix}.png"), bbox_inches="tight"
+            os.path.join(
+                output_dir, f"(ce)_out_combined{postfix}_{self.n_requests:04d}.png"
+            ),
+            bbox_inches="tight",
         )
         plt.close("all")
 

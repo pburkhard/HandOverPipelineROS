@@ -41,7 +41,8 @@ class TransformEstimationClient:
             corr_points_object: Corresponding points in the object image.
             corr_points_grasp: Corresponding points in the grasp image.
         Returns:
-            The estimated transform between the object and grasp image frames.
+            The estimated transform between the object and grasp image frames and the mean
+            squared error of the transformation.
         """
         self._send_goal(
             object_camera_info=object_camera_info,
@@ -60,7 +61,7 @@ class TransformEstimationClient:
             return None
 
         rospy.loginfo("Grasp image generated successfully.")
-        return result.transform_grasp_to_object
+        return result.transform_grasp_to_object, result.mse.data
 
     def _send_goal(
         self,

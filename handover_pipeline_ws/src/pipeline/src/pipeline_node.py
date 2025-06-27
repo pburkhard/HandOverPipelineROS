@@ -27,8 +27,12 @@ from sensor_msgs.msg import Image, CameraInfo
 from std_msgs.msg import String, Int32MultiArray
 from tf2_msgs.msg import TFMessage
 
-# from pipeline.msg import Task
-from custom_msg.msg import Task
+
+try:
+    from custom_msg.msg import Task
+except ImportError:
+    from pipeline.msg import Task
+
 
 import tf2_ros
 from visualization_msgs.msg import Marker
@@ -314,28 +318,6 @@ class Pipeline:
             )
             rospy.loginfo("Grasp image generation completed.")
 
-        # Estimate correspondence
-        if self.cfg.debug.bypass_correspondence_estimator:
-            rospy.loginfo("Bypassing correspondence estimator. Using example data.")
-            # object correspondence points
-            path = os.path.join(self.cfg.debug.example_dir, "corr_points_object.npy")
-            np_data = np.load(path)
-            self.corr_points_object = np_to_multiarraymsg(np_data, Int32MultiArray)
-            # grasp correspondence points
-            path = os.path.join(self.cfg.debug.example_dir, "corr_points_grasp.npy")
-            np_data = np.load(path)
-            self.corr_points_grasp = np_to_multiarraymsg(np_data, Int32MultiArray)
-        else:
-            rospy.loginfo("Estimating correspondence...")
-            self.corr_points_object, self.corr_points_grasp = (
-                self.correspondence_estimation_client.estimate_correspondence(
-                    object_image=self.object_image,
-                    grasp_image=self.grasp_image,
-                    object_description=self.object_description,
-                )
-            )
-            rospy.loginfo("Correspondence estimation completed.")
-
         # Get the camera info and hand reconstruction in the grasp image
         if self.cfg.debug.bypass_hand_reconstructor:
             rospy.loginfo("Bypassing hand reconstructor. Using example data.")
@@ -362,26 +344,82 @@ class Pipeline:
                 )
             )
 
-        # Estimate the hand pose in the robot camera frame
-        if self.cfg.debug.bypass_transform_estimator:
-            rospy.loginfo("Bypassing transform estimator. Using example data.")
-            # Load the example transform from a file
-            transform_path = os.path.join(
-                self.cfg.debug.example_dir, "transform_gen_cam_to_robot_cam.npy"
+        if self.cfg.try_mirrored_image:
+            object_image_np = imgmsg_to_cv2(self.object_image)
+            object_image_mirrored_np = cv2.flip(
+                object_image_np, 1
+            )  # 1 means vertical axis (left-right)
+            object_image_mirrored = cv2_to_imgmsg(
+                object_image_mirrored_np, encoding="bgr8"
             )
-            transform_data = np.load(transform_path)
-            self.transform_gen_cam_to_robot_cam = np_to_transformmsg(transform_data)
+            object_images = [self.object_image, object_image_mirrored]
+            rospy.loginfo(
+                "Running correspondence estimator twice: With mirrored object images."
+            )
         else:
-            rospy.loginfo("Estimating hand pose in robot camera frame...")
-            self.transform_gen_cam_to_robot_cam = (
-                self.transform_estimation_client.estimate_transform(
+            object_images = [self.object_image]
+
+        transforms_gen_cam_to_robot_cam = []
+        mse_list = []
+        for object_image in object_images:
+            # Estimate correspondence
+            if self.cfg.debug.bypass_correspondence_estimator:
+                rospy.loginfo("Bypassing correspondence estimator. Using example data.")
+                # object correspondence points
+                path = os.path.join(
+                    self.cfg.debug.example_dir, "corr_points_object.npy"
+                )
+                np_data = np.load(path)
+                self.corr_points_object = np_to_multiarraymsg(np_data, Int32MultiArray)
+                # grasp correspondence points
+                path = os.path.join(self.cfg.debug.example_dir, "corr_points_grasp.npy")
+                np_data = np.load(path)
+                self.corr_points_grasp = np_to_multiarraymsg(np_data, Int32MultiArray)
+            else:
+                rospy.loginfo("Estimating correspondence...")
+                self.corr_points_object, self.corr_points_grasp = (
+                    self.correspondence_estimation_client.estimate_correspondence(
+                        object_image=object_image,
+                        grasp_image=self.grasp_image,
+                        object_description=self.object_description,
+                    )
+                )
+                rospy.loginfo("Correspondence estimation completed.")
+
+            # Estimate the transform from the gen camera frame to the robot camera frame
+            if self.cfg.debug.bypass_transform_estimator:
+                rospy.loginfo("Bypassing transform estimator. Using example data.")
+                # Load the example transform from a file
+                transform_path = os.path.join(
+                    self.cfg.debug.example_dir, "transform_gen_cam_to_robot_cam.npy"
+                )
+                transform_np = np.load(transform_path)
+                transforms_gen_cam_to_robot_cam.append(np_to_transformmsg(transform_np))
+                mse_list.append(0.0)  # Use a dummy value
+            else:
+                rospy.loginfo("Estimating hand pose in robot camera frame...")
+                transform, mse = self.transform_estimation_client.estimate_transform(
                     object_camera_info=self.object_camera_info,
                     grasp_camera_info=self.grasp_camera_info,
                     object_image_depth=self.object_image_depth,
                     corr_points_object=self.corr_points_object,
                     corr_points_grasp=self.corr_points_grasp,
                 )
-            )
+                mse_list.append(mse)
+                transforms_gen_cam_to_robot_cam.append(transform)
+
+        # Get the best transform based on the mean squared error
+        idx = mse_list.index(min(mse_list))
+        self.transform_gen_cam_to_robot_cam = transforms_gen_cam_to_robot_cam[idx]
+        if self.cfg.debug.log_verbose:
+            rospy.loginfo(f"Transform MSE: {mse_list[idx]}")
+            if self.cfg.try_mirrored_image:
+                rospy.loginfo(f"Transform MSE for original image: {mse_list[0]}")
+                rospy.loginfo(f"Transform MSE for mirrored image: {mse_list[1]}")
+        if idx == 0:
+            rospy.loginfo("Using original object image for transform estimation.")
+        else:
+            rospy.loginfo("Using mirrored object image for transform estimation.")
 
         # Finally calculate the overall transform from the hand frame to the gripper frame
         transform_hand_pose_to_gen_cam = self._invert_transform(

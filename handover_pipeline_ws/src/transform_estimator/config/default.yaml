@@ -13,5 +13,6 @@ debug:
   log_config: true  # log the configuration used for the pipeline
   log_3d_points: True  # log the estimated 3D correspondence points
   log_optimization_results: True  # log verbose optimization results
+  log_transform_mse: True  # log the mean squared error of the transform estimation
   log_visualization: True  # log visualization of the transform
   log_verbose: True  # log verbose information during the execution

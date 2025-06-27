@@ -20,7 +20,7 @@ from msg_utils import (
     np_to_transformmsg,
 )
 
-from std_msgs.msg import String
+from std_msgs.msg import String, Float32
 from transform_estimator.msg import (
     EstimateTransformAction,
     EstimateTransformResult,
@@ -72,6 +72,8 @@ class TransformEstimator:
             with open(config_path, "w") as f:
                 OmegaConf.save(config=self.cfg, f=f.name)
 
+        self.n_requests = 0  # Keep track of the number of requests
+
         self._server.start()
         rospy.loginfo(f"{cfg.ros.node_name} action server started.")
 
@@ -95,6 +97,8 @@ class TransformEstimator:
             self._result.success = False
             self._server.set_aborted()
             return
+
+        self.n_requests += 1
 
         K_object = np.array(goal.object_camera_info.K, dtype=np.float64).reshape(3, 3)
         K_grasp = np.array(goal.grasp_camera_info.K, dtype=np.float64).reshape(3, 3)
@@ -127,10 +131,14 @@ class TransformEstimator:
 
         rospy.loginfo("Extracted object points in 3D")
         if self.cfg.debug.log_3d_points:
-            path = os.path.join(self.out_dir, "(te)_corr_points_object_3D.npy")
+            path = os.path.join(
+                self.out_dir, f"(te)_corr_points_object_3D_{self.n_requests:04d}.npy"
+            )
             np.save(path, corr_points_object_3D)
         if self.cfg.debug.log_visualization:
-            path = os.path.join(self.out_dir, "(te)_3d_reconstruction_object.png")
+            path = os.path.join(
+                self.out_dir, f"(te)_3d_reconstruction_object_{self.n_requests:04d}.png"
+            )
             self.save_3d_reconstruction_visualization(
                 intrinsic_matrix=K_object,
                 points_3D=corr_points_object_3D,
@@ -148,10 +156,14 @@ class TransformEstimator:
         )
         rospy.loginfo(f"Reconstructed grasp points in 3D space with cost: {cost:.4f}")
         if self.cfg.debug.log_3d_points:
-            path = os.path.join(self.out_dir, "(te)_corr_points_grasp_3D.npy")
+            path = os.path.join(
+                self.out_dir, f"(te)_corr_points_grasp_3D_{self.n_requests:04d}.npy"
+            )
             np.save(path, corr_points_grasp_3D)
         if self.cfg.debug.log_visualization:
-            path = os.path.join(self.out_dir, "(te)_3d_reconstruction_grasp.png")
+            path = os.path.join(
+                self.out_dir, f"(te)_3d_reconstruction_grasp_{self.n_requests:04d}.png"
+            )
             self.save_3d_reconstruction_visualization(
                 intrinsic_matrix=K_grasp,
                 points_3D=corr_points_grasp_3D,
@@ -167,16 +179,22 @@ class TransformEstimator:
         self._feedback.status = "Estimating transformation matrix..."
         self._feedback.percent_complete = 50
         self._server.publish_feedback(self._feedback)
-        transformation = self.reconstruct_tranformation(
+        transformation, mse = self.reconstruct_tranformation(
             corr_points_grasp_3D,
             corr_points_object_3D,
+        )
+        rospy.loginfo(
+            f"Estimated transformation matrix with mean squared error: {mse:.4f}"
         )
         if self.cfg.debug.log_verbose:
             rospy.loginfo(
                 f"Estimated transformation matrix (grasp to object frame):\n{transformation}"
             )
         if self.cfg.debug.log_visualization:
-            path = os.path.join(self.out_dir, "(te)_transformation_visualization.png")
+            path = os.path.join(
+                self.out_dir,
+                f"(te)_transformation_visualization_{self.n_requests:04d}.png",
+            )
             self.save_transform_visualization(
                 source_points=corr_points_grasp_3D,
                 target_points=corr_points_object_3D,
@@ -193,6 +211,8 @@ class TransformEstimator:
         rospy.loginfo("Transformation estimation completed.")
 
         # Set the result and mark the action as succeeded
+        self._result.success = True
+        self._result.mse = Float32(mse)
         self._result.transform_grasp_to_object = np_to_transformmsg(transformation)
         self._server.set_succeeded(self._result)
 
@@ -208,22 +228,38 @@ class TransformEstimator:
             target_points (np.ndarray): Nx3 array of 3D points in the target frame.
         Returns:
             np.ndarray: 4x4 transformation matrix.
+            float: Mean squared error between the transformed source points and target points.
         """
 
+        n = len(source_points)
         source = open3d.geometry.PointCloud()
         target = open3d.geometry.PointCloud()
         source.points = open3d.utility.Vector3dVector(source_points)
         target.points = open3d.utility.Vector3dVector(target_points)
 
         # Create correspondences explicitly (point i in source corresponds to point i in target)
-        correspondences = np.array([(i, i) for i in range(len(source_points))])
+        correspondences = np.array([(i, i) for i in range(n)])
 
         # TODO: Implement RANSAC if necessary
         transformation = open3d.pipelines.registration.TransformationEstimationPointToPoint().compute_transformation(
             source, target, open3d.utility.Vector2iVector(correspondences)
         )
 
-        return transformation
+        # Mean squared distance between transformed source and target points
+        source_homogeneous = np.hstack((source_points, np.ones((n, 1))))
+        source_transformed = (transformation @ source_homogeneous.T).T[:, :3]
+
+        mse = np.mean(np.linalg.norm(source_transformed - target_points, axis=1) ** 2)
+
+        if self.cfg.debug.log_transform_mse:
+            mse_path = os.path.join(
+                self.out_dir, f"(te)_mse_transformation_{self.n_requests:04d}.txt"
+            )
+            with open(mse_path, "w") as f:
+                f.write(f"Mean Squared Error: {mse:.4f}\n")
+            rospy.loginfo(f"Mean Squared Error saved to {mse_path}")
+
+        return transformation, mse
 
     def reconstruct_3d_points(
         self,
@@ -314,7 +350,10 @@ class TransformEstimator:
         result = minimize(objective_function, initial_params, method="Powell")
         reconstructed_points = result.x.reshape(-1, 3)
         if self.cfg.debug.log_optimization_results:
-            path = os.path.join(self.out_dir, "(te)_transform_estimation_results.yaml")
+            path = os.path.join(
+                self.out_dir,
+                f"(te)_transform_estimation_results_{self.n_requests:04d}.yaml",
+            )
             with open(path, "w") as f:
                 yaml.dump(
                     {

@@ -7,6 +7,7 @@ std_msgs/Int32MultiArray corr_points_grasp  # Corresponding points in the grasp 
 ---
 # Result
 bool success
+std_msgs/Float32 mse  # mean squared error between the transformed grasp points and the object points. Indicates the quality of the matching
 geometry_msgs/Transform transform_grasp_to_object  # Transform from grasp to object frame
 ---
 # Feedback
