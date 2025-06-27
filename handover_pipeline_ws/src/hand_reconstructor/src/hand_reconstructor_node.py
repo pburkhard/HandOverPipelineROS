@@ -23,7 +23,12 @@ import hamer
 
 # TODO: Remove dependency on the pipeline package
 sys.path.append(str(Path(__file__).parent.parent.parent / "pipeline/src/"))
-from msg_utils import np_to_transformmsg, imgmsg_to_cv2, np_to_multiarraymsg, cv2_to_imgmsg
+from msg_utils import (
+    np_to_transformmsg,
+    imgmsg_to_cv2,
+    np_to_multiarraymsg,
+    cv2_to_imgmsg,
+)
 
 from hand_reconstructor.srv import (
     ReconstructHand,
@@ -72,7 +77,9 @@ class HandReconstructor:
         self.hamer, self.hamer_cfg = load_hamer(path)
         self.hamer = self.hamer.to(self.device)
         self.hamer.eval()
+        self.hamer_cfg.defrost()
         self.hamer_cfg.EXTRA.FOCAL_LENGTH = cfg.focal_length
+        self.hamer_cfg.freeze()
 
         # Initialize the body detector (Needed to crop the hand region)
         if cfg.body_detector == "vitdet":
@@ -167,7 +174,6 @@ class HandReconstructor:
 
         rospy.loginfo(f"{cfg.ros.node_name} service initialized.")
 
-
     def _reconstr_hand_callback(
         self, request: ReconstructHandRequest
     ) -> ReconstructHandResponse:
@@ -259,7 +265,7 @@ class HandReconstructor:
 
         # Check how many hands were detected
         if estimation["n_hands"] == 0:
-            rospy.logerr("No hands detected in the image.")
+            rospy.logerr("Hand detected, but was not recognized by model.")
             return ReconstructHandPoseResponse(success=False)
         elif estimation["n_hands"] > 1:
             rospy.logwarn(
@@ -268,7 +274,10 @@ class HandReconstructor:
 
         # Extract the transform
         rotation = estimation["hand_global_orient"][0, 0, ...]  # Shape (3, 3)
-        translation = estimation["pred_keypoints_3d"][0, 0, :] + estimation["pred_cam_t_global"][0, :] # Shape (3,)
+        translation = (
+            estimation["pred_keypoints_3d"][0, 0, :]
+            + estimation["pred_cam_t_global"][0, :]
+        )  # Shape (3,)
         transform_matrix = np.eye(4)
         transform_matrix[:3, :3] = rotation
         transform_matrix[:3, 3] = translation
@@ -324,7 +333,7 @@ class HandReconstructor:
 
         # Check how many hands were detected
         if estimation["n_hands"] == 0:
-            rospy.logerr("No hands detected in the image.")
+            rospy.logerr("Hand detected, but was not recognized by model.")
             return EstimateCameraResponse(success=False)
         elif estimation["n_hands"] > 1:
             rospy.logwarn(
@@ -344,10 +353,8 @@ class HandReconstructor:
         response.camera_info = camera_info
 
         return response
-    
-    def _render_hand_callback(
-        self, request: RenderHandRequest
-    ) -> RenderHandResponse:
+
+    def _render_hand_callback(self, request: RenderHandRequest) -> RenderHandResponse:
         """Service callback to render the hand on the provided image.
 
         Args:
@@ -384,9 +391,15 @@ class HandReconstructor:
         if "pred_vertices" in estimation:
             rospy.logwarn("Ignoring the predicted vertices in the estimation data.")
         mano_out = self.hamer.mano(
-            global_orient=torch.from_numpy(estimation["hand_global_orient"]).float().to(self.device),  # Shape: (1, 1, 3, 3)
-            hand_pose=torch.from_numpy(estimation["hand_pose"]).float().to(self.device),  # Shape: (1, 15, 3, 3)
-            betas=torch.from_numpy(estimation["hand_shape"]).float().to(self.device)  # Shape: (1, 10)
+            global_orient=torch.from_numpy(estimation["hand_global_orient"])
+            .float()
+            .to(self.device),  # Shape: (1, 1, 3, 3)
+            hand_pose=torch.from_numpy(estimation["hand_pose"])
+            .float()
+            .to(self.device),  # Shape: (1, 15, 3, 3)
+            betas=torch.from_numpy(estimation["hand_shape"])
+            .float()
+            .to(self.device),  # Shape: (1, 10)
         )
         estimation["pred_vertices"] = mano_out.vertices.detach().cpu().numpy()
 
@@ -396,7 +409,7 @@ class HandReconstructor:
         # Convert the rendered image back to ROS message format
         rendered_image_bgr = rendered_image.astype(np.uint8)
         rendered_image_msg = cv2_to_imgmsg(rendered_image_bgr, encoding="bgr8")
-        
+
         response = RenderHandResponse()
         response.success = True
         response.rendered_image = rendered_image_msg
@@ -423,7 +436,9 @@ class HandReconstructor:
         img = img.copy()[:, :, ::-1]  # Convert to RGB format
 
         if self.cfg.debug.log_detections:
-            path = Path(self.out_dir) / f"(hr)_human_detection_{self.n_requests:04d}.txt"
+            path = (
+                Path(self.out_dir) / f"(hr)_human_detection_{self.n_requests:04d}.txt"
+            )
             with open(path, "w") as f:
                 instances = det_out["instances"]
                 for i in range(len(instances)):
@@ -448,12 +463,16 @@ class HandReconstructor:
         )
 
         if self.cfg.debug.log_detections:
-            path = Path(self.out_dir) / f"(hr)_vitpose_detection_{self.n_requests:04d}.txt"
+            path = (
+                Path(self.out_dir) / f"(hr)_vitpose_detection_{self.n_requests:04d}.txt"
+            )
             with open(path, "w") as f:
                 for i, vitposes in enumerate(vitposes_out):
                     f.write(f"Person {i}:\n")
                     for j, point in enumerate(vitposes["keypoints"]):
-                        f.write(f"  Keypoint {j}: coordinates={point[:2]}, confidence={point[2]}\n")
+                        f.write(
+                            f"  Keypoint {j}: coordinates={point[:2]}, confidence={point[2]}\n"
+                        )
 
         bboxes = []
 
@@ -616,7 +635,7 @@ class HandReconstructor:
             ),  # predicted camera translation tx, ty, tz in the bbox frame
             "pred_keypoints_2d": np.empty(
                 [n_hands, 21, 2]
-            ),  # predicted 2d keypoints in the cropped bbox 
+            ),  # predicted 2d keypoints in the cropped bbox
             "pred_keypoints_3d": np.empty(
                 [n_hands, 21, 3]
             ),  # predicted 3d keypoints. Add pred_cam_t_global to get the camera frame coordinates.
@@ -707,25 +726,41 @@ class HandReconstructor:
             out_dict["pred_cam_t_global"][start_idx:end_idx] = (
                 pred_cam_t_global.detach().cpu().float().numpy()
             )
+
+            cx = pred_cam[:, 1] * box_size + box_center[:, 0]
+            cy = pred_cam[:, 2] * box_size + box_center[:, 1]
             out_dict["intrinsic_matrix"][start_idx:end_idx] = (
                 self._get_intrinsic_matrix(
                     scaled_focal_length.repeat(end_idx - start_idx),
                     scaled_focal_length.repeat(end_idx - start_idx),
-                    pred_cam_t_global[:, 0],
-                    pred_cam_t_global[:, 1],
+                    cx,
+                    cy,
                 )
                 .detach()
                 .cpu()
                 .numpy()
             )
-            multiplier = torch.stack([multiplier, torch.ones_like(multiplier)], dim=-1)
+
+            # Reshape the following tensors to (n_hands, 21, 2) to calculate the full 2D keypoints
+            mult = multiplier.expand(-1, 21)
+            mult = torch.stack([mult, torch.ones_like(mult)], dim=-1)
+            box_sz = box_size.view(-1, 1, 1).expand(-1, 21, 2)
+            box_ctr = box_center.view(-1, 1, 2).expand(-1, 21, 2)
+
+            # Calculate the full 2D keypoints in the full image frame
             out_dict["pred_keypoints_2d_full"][start_idx:end_idx] = (
-                (out["pred_keypoints_2d"][start_idx:end_idx] * box_size * multiplier + box_center).detach().cpu().float().numpy()
+                (out["pred_keypoints_2d"][start_idx:end_idx] * box_sz * mult + box_ctr)
+                .detach()
+                .cpu()
+                .float()
+                .numpy()
             )
 
         return out_dict
 
-    def _get_mesh_visualization(self, estimation: dict, image: np.ndarray) -> np.ndarray:
+    def _get_mesh_visualization(
+        self, estimation: dict, image: np.ndarray
+    ) -> np.ndarray:
         """Renders the estimated hand mesh into the original image
 
         Args:
@@ -790,8 +825,10 @@ class HandReconstructor:
         image = 255 * image[:, :, ::-1]
 
         return image
-    
-    def _get_keypoint_visualization(self, estimation: dict, image: np.ndarray) -> np.ndarray:
+
+    def _get_keypoint_visualization(
+        self, estimation: dict, image: np.ndarray
+    ) -> np.ndarray:
         """Renders the estimated hand keypoints into the original image
 
         Args:
@@ -810,14 +847,29 @@ class HandReconstructor:
         keypoints_2d = estimation["pred_keypoints_2d_full"]
         if keypoints_2d.shape[0] == 0:
             return image
-        
+
         # Define the hand skeleton connections (using standard 21 keypoints)
         hand_connections = [
-            (0, 1), (1, 2), (2, 3), (3, 4),        # Thumb
-            (0, 5), (5, 6), (6, 7), (7, 8),        # Index
-            (0, 9), (9,10), (10,11), (11,12),      # Middle
-            (0,13), (13,14), (14,15), (15,16),     # Ring
-            (0,17), (17,18), (18,19), (19,20)      # Pinky
+            (0, 1),
+            (1, 2),
+            (2, 3),
+            (3, 4),  # Thumb
+            (0, 5),
+            (5, 6),
+            (6, 7),
+            (7, 8),  # Index
+            (0, 9),
+            (9, 10),
+            (10, 11),
+            (11, 12),  # Middle
+            (0, 13),
+            (13, 14),
+            (14, 15),
+            (15, 16),  # Ring
+            (0, 17),
+            (17, 18),
+            (18, 19),
+            (19, 20),  # Pinky
         ]
 
         # Draw keypoints and skeleton for each detected hand
@@ -829,7 +881,9 @@ class HandReconstructor:
                 for start, end in hand_connections:
                     x1, y1 = hand[start]
                     x2, y2 = hand[end]
-                    cv2.line(image, (int(x1), int(y1)), (int(x2), int(y2)), (255, 0, 0), 2)
+                    cv2.line(
+                        image, (int(x1), int(y1)), (int(x2), int(y2)), (255, 0, 0), 2
+                    )
         return image
 
     def visualize_mesh(self, estimation: dict, img_path: str):
@@ -846,7 +900,9 @@ class HandReconstructor:
         cv2.waitKey(0)
         cv2.destroyAllWindows()
 
-    def save_mesh_visualization(self, estimation: dict, image: np.ndarray, output_path: str):
+    def save_mesh_visualization(
+        self, estimation: dict, image: np.ndarray, output_path: str
+    ):
         """Renders the estimated hand into the original image and saves the
             result at the specified path
 
@@ -860,7 +916,9 @@ class HandReconstructor:
         out = self._get_mesh_visualization(estimation, image)
         cv2.imwrite(output_path, out)
 
-    def save_keypoint_visualization(self, estimation: dict, image: np.ndarray, output_path: str):
+    def save_keypoint_visualization(
+        self, estimation: dict, image: np.ndarray, output_path: str
+    ):
         """Renders the estimated hand keypoints into the original image and saves the
             result at the specified path
 
