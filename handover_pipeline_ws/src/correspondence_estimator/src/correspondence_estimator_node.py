@@ -416,10 +416,19 @@ class CorrespondenceEstimator:
         fig1, fig2 = draw_correspondences(
             points1_tuples, points2_tuples, image1, image2
         )
-        fig1_size = fig1.get_size_inches()
-        fig2_size = fig2.get_size_inches()
+
+        # Add correspondence point labels
+        ax1 = fig1.axes[0]
+        ax2 = fig2.axes[0]
+        for i in range(len(points1_tuples)):
+            y1,x1 = points1_tuples[i]
+            y2,x2 = points2_tuples[i]
+            ax1.text(x1,y1, f"p{i}", color="red", fontsize=12)
+            ax2.text(x2,y2, f"p{i}", color="red", fontsize=12)
 
         # Create a new figure for side-by-side display
+        fig1_size = fig1.get_size_inches()
+        fig2_size = fig2.get_size_inches()
         figsize = (fig1_size[0] + fig2_size[0], max(fig1_size[1], fig2_size[1]))
         combined_fig = plt.figure(figsize=figsize)
 
