@@ -318,31 +318,53 @@ class Pipeline:
             )
             rospy.loginfo("Grasp image generation completed.")
 
-        # Get the camera info and hand reconstruction in the grasp image
-        if self.cfg.debug.bypass_hand_reconstructor:
+        # Get the camera info
+        if (
+            self.cfg.camera_info_source == "example_data"
+            or (
+                self.cfg.camera_info_source == "grasp_image"
+                and self.cfg.debug.bypass_hand_reconstructor
+            )
+            or (
+                self.cfg.camera_info_source == "robot_camera"
+                and self.cfg.debug.bypass_camera_subscriber
+            )
+        ):
+            if self.cfg.camera_info_source != "example_data":
+                rospy.logwarn(
+                    f"Using example data for camera intrinsics. Option '{self.cfg.camera_info_source}' is not available."
+                )
             rospy.loginfo("Bypassing hand reconstructor. Using example data.")
-            # Camera info
             path = os.path.join(self.cfg.debug.example_dir, "K_grasp.npy")
             K_grasp = np.load(path)
             self.grasp_camera_info = CameraInfo()
             self.grasp_camera_info.K = K_grasp.flatten().tolist()
-            path = os.path.join(
-                self.cfg.debug.example_dir, "transform_gen_cam_to_hand_pose.npy"
-            )
-            self.transform_gen_cam_to_hand_pose = np_to_transformmsg(np.load(path))
-        else:
+        elif (
+            self.cfg.camera_info_source == "grasp_image"
+            and not self.cfg.debug.bypass_hand_reconstructor
+        ):
             rospy.loginfo("Estimating camera intrinsics for the grasp image...")
             self.grasp_camera_info = (
                 self.hand_reconstructor_client.estimate_camera_info(
                     image=self.grasp_image
                 )
             )
-            rospy.loginfo("Estimating hand pose in the grasp image...")
-            self.transform_gen_cam_to_hand_pose, _ = (
-                self.hand_reconstructor_client.reconstruct_hand_pose(
-                    image=self.grasp_image
-                )
+        elif (
+            self.cfg.camera_info_source == "robot_camera"
+            and not self.cfg.debug.bypass_camera_subscriber
+        ):
+            rospy.loginfo("Using camera info from the robot camera...")
+            # Wait for the latest camera info to be available
+            while not rospy.is_shutdown() and self.latest_object_camera_info is None:
+                rospy.loginfo("Waiting for latest camera info...")
+                rospy.sleep(1)
+            self.grasp_camera_info = self.latest_object_camera_info
+        else:
+            rospy.logerr(
+                f"Invalid camera info source: {self.cfg.camera_info_source}. "
+                "Please choose from 'image', 'robot_camera', or 'example_data'."
             )
+            return
 
         if self.cfg.try_mirrored_image:
             object_image_np = imgmsg_to_cv2(self.object_image)
@@ -360,6 +382,7 @@ class Pipeline:
             object_images = [self.object_image]
 
         transforms_gen_cam_to_robot_cam = []
+        cam_info_list = []
         mse_list = []
         for object_image in object_images:
             # Estimate correspondence
@@ -395,22 +418,27 @@ class Pipeline:
                 )
                 transform_np = np.load(transform_path)
                 transforms_gen_cam_to_robot_cam.append(np_to_transformmsg(transform_np))
+                cam_info_list.append(self.grasp_camera_info)
                 mse_list.append(0.0)  # Use a dummy value
             else:
                 rospy.loginfo("Estimating hand pose in robot camera frame...")
-                transform, mse = self.transform_estimation_client.estimate_transform(
-                    object_camera_info=self.object_camera_info,
-                    grasp_camera_info=self.grasp_camera_info,
-                    object_image_depth=self.object_image_depth,
-                    corr_points_object=self.corr_points_object,
-                    corr_points_grasp=self.corr_points_grasp,
+                transform, cam_info, mse = (
+                    self.transform_estimation_client.estimate_transform(
+                        object_camera_info=self.object_camera_info,
+                        grasp_camera_info=self.grasp_camera_info,
+                        object_image_depth=self.object_image_depth,
+                        corr_points_object=self.corr_points_object,
+                        corr_points_grasp=self.corr_points_grasp,
+                    )
                 )
-                mse_list.append(mse)
                 transforms_gen_cam_to_robot_cam.append(transform)
+                cam_info_list.append(cam_info)
+                mse_list.append(mse)
 
         # Get the best transform based on the mean squared error
         idx = mse_list.index(min(mse_list))
         self.transform_gen_cam_to_robot_cam = transforms_gen_cam_to_robot_cam[idx]
+        self.focal_length_optimized = cam_info_list[idx].K[0]
         if self.cfg.debug.log_verbose:
             rospy.loginfo(f"Transform MSE: {mse_list[idx]}")
             if self.cfg.try_mirrored_image:
@@ -421,6 +449,23 @@ class Pipeline:
         else:
             rospy.loginfo("Using mirrored object image for transform estimation.")
 
+        # Get the hand reconstruction in the grasp image
+        if self.cfg.debug.bypass_hand_reconstructor:
+            rospy.loginfo("Bypassing hand reconstructor. Using example data.")
+            path = os.path.join(
+                self.cfg.debug.example_dir, "transform_gen_cam_to_hand_pose.npy"
+            )
+            self.transform_gen_cam_to_hand_pose = np_to_transformmsg(np.load(path))
+        else:
+            rospy.loginfo(
+                f"Estimating hand pose in the grasp image with focal length {self.focal_length_optimized}..."
+            )
+            self.transform_gen_cam_to_hand_pose, _ = (
+                self.hand_reconstructor_client.reconstruct_hand_pose(
+                    image=self.grasp_image, focal_length=self.focal_length_optimized
+                )
+            )
+
         # Finally calculate the overall transform from the hand frame to the gripper frame
         transform_hand_pose_to_gen_cam = self._invert_transform(
             self.transform_gen_cam_to_hand_pose
@@ -430,6 +475,23 @@ class Pipeline:
             self.transform_gen_cam_to_robot_cam,
             self.transform_robot_cam_to_selected_grasp,
         )
+        if self.cfg.debug.log_verbose:
+            rospy.loginfo(
+                f"Transform from robot camera to selected grasp:\n{self.transform_robot_cam_to_selected_grasp}"
+            )
+            transform_gen_cam_to_selected_grasp = self._concat_transforms(
+                self.transform_gen_cam_to_robot_cam,
+                self.transform_robot_cam_to_selected_grasp,
+            )
+            rospy.loginfo(
+                f"Transform from gen camera to hand pose:\n{self.transform_gen_cam_to_hand_pose}"
+            )
+            rospy.loginfo(
+                f"Transform from gen camera to selected grasp:\n{transform_gen_cam_to_selected_grasp}"
+            )
+            rospy.loginfo(
+                f"Transform from hand pose to selected grasp:\n{self.transform_hand_pose_to_selected_grasp}"
+            )
 
         if self.cfg.debug.visualize_target_hand_pose:
             # Visualize the hand pose in the object image
@@ -478,9 +540,11 @@ class Pipeline:
                 )
 
                 # Extract the focal length from the camera info
-                K = np.array(self.object_camera_info.K).reshape(3, 3)
-                focal_length = (K[0, 0] + K[1, 1]) / 2.0  # Average focal length
-                estimation_dict["scaled_focal_length"] = np.tile(focal_length, n_hands)
+                # K = np.array(self.object_camera_info.K).reshape(3, 3)
+                # focal_length = (K[0, 0] + K[1, 1]) / 2.0  # Average focal length
+                # estimation_dict["scaled_focal_length"] = np.tile(
+                #     focal_length, n_hands
+                # ).reshape(-1, 1)
 
                 # call the renderer
                 out_image = self.hand_reconstructor_client.render_hand(
@@ -574,9 +638,10 @@ class Pipeline:
                         f"[it {i:04d}] Estimating transform from camera to hand..."
                     )
                     # Estimate the hand orientation and 2D keypoints in the object image
+                    f = live_camera_info.K[0]  # Focal length
                     hand_orient_transform, keypoints_2d = (
                         self.hand_reconstructor_client.reconstruct_hand_pose(
-                            image=live_image
+                            image=live_image, focal_length=f
                         )
                     )
                     if hand_orient_transform is None or keypoints_2d is None:
@@ -596,22 +661,22 @@ class Pipeline:
                     )
 
                     # Extract the 3D values using the depth image
-                    K = np.array(live_camera_info.K, dtype=np.float64).reshape(3, 3)
-                    depth = imgmsg_to_cv2(live_image_depth)
-                    keypoints_3d = self._points_2D_to_3D(
-                        intrinsic_matrix=K,
-                        depth_image=depth,
-                        points_2D=keypoints_2d_np,
-                    )
+                    # K = np.array(live_camera_info.K, dtype=np.float64).reshape(3, 3)
+                    # depth = imgmsg_to_cv2(live_image_depth)
+                    # keypoints_3d = self._points_2D_to_3D(
+                    #     intrinsic_matrix=K,
+                    #     depth_image=depth,
+                    #     points_2D=keypoints_2d_np,
+                    # )
 
                     # Calculate the translation from the camera to the hand
-                    translation_np = np.mean(keypoints_3d, axis=0)  # Take the average
+                    # translation_np = np.mean(keypoints_3d, axis=0)  # Take the average
 
                     # Create the transform from camera to hand
                     transform_camera_to_hand = Transform()
-                    transform_camera_to_hand.translation.x = translation_np[0]
-                    transform_camera_to_hand.translation.y = translation_np[1]
-                    transform_camera_to_hand.translation.z = translation_np[2]
+                    # transform_camera_to_hand.translation.x = translation_np[0]
+                    # transform_camera_to_hand.translation.y = translation_np[1]
+                    # transform_camera_to_hand.translation.z = translation_np[2]
                     transform_camera_to_hand.rotation = hand_orient_transform.rotation
 
                 # Calculate the transform from base to gripper

@@ -21,7 +21,7 @@ from hand_reconstructor.srv import (
 )
 from geometry_msgs.msg import Transform
 from sensor_msgs.msg import CameraInfo, Image
-from std_msgs.msg import Int32MultiArray, String
+from std_msgs.msg import Float32, Int32MultiArray, String
 
 
 class HandReconstructorClient:
@@ -73,17 +73,18 @@ class HandReconstructorClient:
             rospy.logerr(f"Service call failed: {e}")
             return None, None
         
-    def reconstruct_hand_pose(self, image: Image) -> Tuple[Transform, Int32MultiArray]:
+    def reconstruct_hand_pose(self, image: Image, focal_length: float) -> Tuple[Transform, Int32MultiArray]:
         """ Reconstruct the hand pose from the provided image. Waits for the
         service to complete and returns the result.
         Args:
             image: The image of the hand to reconstruct.
+            focal_length: The focal length of the camera used to capture the image.
         Returns:
             A tuple containing the hand transform and 2D-hand-keypoints.
         """
 
         rospy.loginfo("Reconstructing hand pose...")
-        request = ReconstructHandPoseRequest(image=image)
+        request = ReconstructHandPoseRequest(image=image, focal_length=Float32(focal_length))
 
         try:
             response: ReconstructHandPoseResponse = self._reconstr_hand_pose_client(request)

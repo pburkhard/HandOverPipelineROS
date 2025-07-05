@@ -4,7 +4,8 @@ body_detector: "regnety" # 'regnety' or "vitdet"
 rescale_factor: 2.0  # Padding around the detected boundary box for the hand
 body_detector_confidence_threshold: 0.5 
 hand_detector_confidence_threshold: 0.5
-focal_length: 500
+focal_length: 909
+img_size: 1280 # The maximum of the width and height of the input image.
 
 ros:
   node_name: "hand_reconstructor"  # Name of the ROS node
@@ -21,8 +22,8 @@ debug:
   out_dir_topic: "/out_dir"  # Topic to set the output directory dynamically (if out_dir_mode is "topic")
   out_dir_fixed: "/Handover_Pipeline/outputs/" # Fixed output directory path (if out_dir_mode is "fixed")
   log_config: true  # Log the configuration used for the pipeline
-  log_detections: true  # Log the detected hand and body probabilities
+  log_detections: false  # Log the detected hand and body probabilities (Attention: If true, data will be logged in every iteration of the main loop!)
   log_visualization:
-    reconstruct_hand_pose: true  # Log a visualization of the reconstructed hand pose for the reconstruction service
-    reconstruct_hand: true  # Log a visualization of the reconstructed hand for the reconstruction service
-    estimate_camera: true  # Log a visualization of the estimated camera parameters for the camera estimation service
+    reconstruct_hand_pose: false  # Log a visualization of the reconstructed hand pose for the reconstruction service (Attention: If true, data will be logged in every iteration of the main loop!)
+    reconstruct_hand: true  # Log a visualization of the reconstructed hand for the reconstruction service (This service will only be called up to once in the initialization step)
+    estimate_camera: false  # Log a visualization of the estimated camera parameters for the camera estimation service (Attention: If true, data will be logged in every iteration of the main loop!)

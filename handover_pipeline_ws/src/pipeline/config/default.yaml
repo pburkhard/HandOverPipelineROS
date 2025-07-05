@@ -39,7 +39,14 @@ transform_estimator_client:
 
 # If true, run the correspondence estimator twice, once with the original object image and once with a mirrored version of the image.
 # The one with the lower mean squared error at the transform estimation will be used.
-try_mirrored_image: true  
+try_mirrored_image: true
+
+# Options for estimating the intrinsic matrix of the (virtual) gen camera.
+# Options:
+# - "grasp_image": Estimate from grasp image using the hand reconstructor. Attention: For this option to be available, the hand reconstructor must be enabled
+# - "robot_camera" Use real camera intrinsics from the robot camera. Attention: For this option to be available, the camera subscriber must be enabled
+# - "example_data": Load the camera intrinsics from the example data. This is as well the fallback option if the other ones cannot be used.
+camera_info_source: "robot_camera"
 
 debug:
   # All output data will be saved in a folder in this base directory.

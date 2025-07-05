@@ -77,8 +77,12 @@ class HandReconstructor:
         self.hamer, self.hamer_cfg = load_hamer(path)
         self.hamer = self.hamer.to(self.device)
         self.hamer.eval()
+
+        # This ensures that the focal length is set correctly for the renderer.
         self.hamer_cfg.defrost()
-        self.hamer_cfg.EXTRA.FOCAL_LENGTH = cfg.focal_length
+        self.hamer_cfg.EXTRA.FOCAL_LENGTH = (
+            cfg.focal_length * self.hamer_cfg.MODEL.IMAGE_SIZE / self.cfg.img_size
+        )
         self.hamer_cfg.freeze()
 
         # Initialize the body detector (Needed to crop the hand region)
@@ -240,14 +244,17 @@ class HandReconstructor:
         """
 
         # Validate request
-        if not request.image:
-            rospy.logerr("Invalid request: No image given.")
+        if not request.image or not request.focal_length:
+            rospy.logerr("Invalid request, some fields are not given.")
             return ReconstructHandPoseResponse(success=False)
         self.n_requests += 1
 
+        rospy.loginfo("Reconstructing hand pose from image...")
+
         # run the image through the hand pose estimator
         image = imgmsg_to_cv2(request.image)
-        estimation = self.estimate_hand_poses(image)
+        focal_length = request.focal_length.data
+        estimation = self.estimate_hand_poses(image, focal_length=focal_length)
 
         if self.cfg.debug.log_visualization.reconstruct_hand_pose:
             path = Path(self.out_dir) / f"(hr)_hand_mesh_{self.n_requests:04d}.png"
@@ -293,6 +300,8 @@ class HandReconstructor:
         response.success = True
         response.transform_camera_to_hand = transform_camera_to_hand
         response.keypoints_2d = keypoints_2d
+
+        rospy.loginfo("Hand pose reconstruction completed successfully.")
 
         return response
 
@@ -363,6 +372,7 @@ class HandReconstructor:
         Returns:
             RenderHandResponse containing the rendered image.
         """
+        # TODO: Adapt renderer for variable focal length
 
         # Validate request
         if not request.image or not request.estimation_dict:
@@ -370,6 +380,8 @@ class HandReconstructor:
             return RenderHandResponse(success=False)
 
         self.n_requests += 1
+
+        rospy.loginfo("Rendering hands on the given image...")
 
         # Convert the image from ROS message to OpenCV format
         image = imgmsg_to_cv2(request.image)
@@ -413,6 +425,8 @@ class HandReconstructor:
         response = RenderHandResponse()
         response.success = True
         response.rendered_image = rendered_image_msg
+
+        rospy.loginfo("Hand rendering completed successfully.")
 
         return response
 
@@ -549,12 +563,16 @@ class HandReconstructor:
         K[:, 2, 2] = 1.0
         return K
 
-    def estimate_hand_poses(self, image: np.ndarray | str) -> dict:
+    def estimate_hand_poses(
+        self, image: np.ndarray | str, focal_length: float = None
+    ) -> dict:
         """Estimates the hand poses present in the given image.
             The image should contain a single person.
 
         Args:
             image: Path to an image or an image in BGR format (as a numpy array).
+            focal_length: Optional focal length to use for the hand pose estimation.
+                If not provided, the focal length from the configuration will be used.
 
         Returns:
             out_dict: Dictionary containing the estimated hand pose parameters.
@@ -712,11 +730,14 @@ class HandReconstructor:
             box_center = batch["box_center"].float()
             box_size = batch["box_size"].float()
             img_size = batch["img_size"].float()
-            scaled_focal_length = (
-                self.hamer_cfg.EXTRA.FOCAL_LENGTH
-                / self.hamer_cfg.MODEL.IMAGE_SIZE
-                * img_size.max()
-            )
+            if focal_length is not None:
+                scaled_focal_length = torch.tensor([focal_length], device=self.device)
+            else:
+                scaled_focal_length = (
+                    self.hamer_cfg.EXTRA.FOCAL_LENGTH
+                    / self.hamer_cfg.MODEL.IMAGE_SIZE
+                    * img_size.max()
+                )
             out_dict["scaled_focal_length"][start_idx:end_idx] = (
                 scaled_focal_length.detach().cpu().float().numpy()
             )

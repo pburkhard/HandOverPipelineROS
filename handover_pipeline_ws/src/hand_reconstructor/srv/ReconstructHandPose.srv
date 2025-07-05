@@ -1,5 +1,6 @@
 # Request
 sensor_msgs/Image image
+std_msgs/Float32 focal_length  # The estimated focal length of the (virtual) grasp camera
 ---
 # Response
 geometry_msgs/Transform transform_camera_to_hand
