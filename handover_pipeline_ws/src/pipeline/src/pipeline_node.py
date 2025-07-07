@@ -31,7 +31,7 @@ from tf2_msgs.msg import TFMessage
 try:
     from custom_msg.msg import Task
 except ImportError:
-    from pipeline.msg import Task
+    from pipeline.msg import Task  # Fallback if custom_msg is not available
 
 
 import tf2_ros

@@ -12,5 +12,6 @@ dependencies:
     - numpy
     - omegaconf
     - open3d
+    - opencv-python
     - rospkg
     - scipy

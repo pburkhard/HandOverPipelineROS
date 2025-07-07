@@ -3,6 +3,7 @@ ros:
 
 lambda_proj: 10  # lambda for projection loss
 lambda_dist: 0.1  # lambda for distance loss
+noise_std: 5 # standard deviation of the expected noise in the image points in pixels
 
 debug:
   # All output data will be saved to the output directory.

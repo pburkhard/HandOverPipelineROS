@@ -2,6 +2,7 @@
 import actionlib
 from omegaconf import DictConfig
 import rospy
+from typing import Tuple
 
 from geometry_msgs.msg import Transform
 from sensor_msgs.msg import Image, CameraInfo
@@ -30,7 +31,7 @@ class TransformEstimationClient:
         object_image_depth: Image,
         corr_points_object: Int32MultiArray,
         corr_points_grasp: Int32MultiArray,
-    ) -> Transform:
+    ) -> Tuple[Transform, CameraInfo, float]:
         """
         Estimate the transform between the object and grasp images based on the provided
         camera information and corresponding points.
@@ -41,8 +42,9 @@ class TransformEstimationClient:
             corr_points_object: Corresponding points in the object image.
             corr_points_grasp: Corresponding points in the grasp image.
         Returns:
-            The estimated transform between the object and grasp image frames and the mean
-            squared error of the transformation.
+            The estimated transform between the object and grasp image, the optimized camera
+            info for the (virtual) grasp camera, and the mean squared error of the
+            transformation.
         """
         self._send_goal(
             object_camera_info=object_camera_info,
@@ -61,7 +63,7 @@ class TransformEstimationClient:
             return None
 
         rospy.loginfo("Grasp image generated successfully.")
-        return result.transform_grasp_to_object, result.mse.data
+        return result.transform_grasp_to_object, result.grasp_camera_info, result.mse.data
 
     def _send_goal(
         self,
