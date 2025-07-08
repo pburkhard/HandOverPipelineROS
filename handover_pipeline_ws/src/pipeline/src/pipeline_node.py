@@ -193,8 +193,8 @@ class Pipeline:
 
         # Set up the transform publisher
         self.transform_publisher = rospy.Publisher(
-            self.cfg.ros.published_topics.transform_base_to_gripper,
-            TFMessage,
+            self.cfg.ros.published_topics.target_gripper_pose,
+            PoseStamped,
             queue_size=1,
         )
 
@@ -492,23 +492,24 @@ class Pipeline:
         # self.focal_length_optimized = cam_info_list[idx].K[0]
 
         if not self.cfg.use_heuristic_transform_estimation:
+            transform_hand_pose_to_robot_cam = None
             # Finally calculate the overall transform from the hand frame to the gripper frame
             self.transform_robot_cam_to_gen_cam = transforms[idx]
             transform_gen_cam_to_hand_pose = self._invert_transform(
                 self.transform_hand_pose_to_gen_cam
             )
             self.transform_selected_grasp_to_hand_pose = self._concat_transforms(
-                self.transform_selected_grasp_to_robot_cam,
-                self.transform_robot_cam_to_gen_cam,
                 transform_gen_cam_to_hand_pose,
+                self.transform_robot_cam_to_gen_cam,
+                self.transform_selected_grasp_to_robot_cam,
             )
             if self.cfg.debug.log_verbose:
                 rospy.loginfo(
                     f"Selected grasp pose in robot camera frame:\n{self.transform_selected_grasp_to_robot_cam}"
                 )
                 transform_selected_grasp_to_robot_cam = self._concat_transforms(
-                    self.transform_selected_grasp_to_robot_cam,
                     self.transform_robot_cam_to_gen_cam,
+                    self.transform_selected_grasp_to_robot_cam,
                 )
                 rospy.loginfo(
                     f"Hand pose in gen camera frame:\n{self.transform_hand_pose_to_gen_cam}"
@@ -525,8 +526,8 @@ class Pipeline:
                 transform_hand_pose_to_robot_cam
             )
             self.transform_selected_grasp_to_hand_pose = self._concat_transforms(
-                self.transform_selected_grasp_to_robot_cam,
                 transform_robot_cam_to_hand_pose,
+                self.transform_selected_grasp_to_robot_cam,
             )
 
             if self.cfg.debug.log_verbose:
@@ -653,9 +654,12 @@ class Pipeline:
             return
         rospy.loginfo("Entered main loop")
 
+        hand_pose_history = np.ndarray((self.cfg.hand_pose_history_size, 4, 4))
+
         i = 0
         try:
             while not rospy.is_shutdown():
+                i += 1
                 # Store the rbg image and depth image in a variable to make sure they are synchronized
                 if self.cfg.debug.bypass_camera_subscriber:
                     rospy.loginfo(
@@ -702,13 +706,13 @@ class Pipeline:
                         self.cfg.debug.example_dir,
                         "transform_hand_pose_to_robot_cam_latest.npy",
                     )
-                    transform_hand_to_camera = np_to_transformmsg(np.load(path))
+                    transform_hand_pose_to_robot_cam = np_to_transformmsg(np.load(path))
                 else:
-                    rospy.loginfo(
-                        f"[it {i:04d}] Estimating transform from camera to hand..."
-                    )
                     # Estimate the hand orientation and 2D keypoints in the object image
                     f = live_camera_info.K[0]  # Focal length
+                    rospy.loginfo(
+                        f"[it {i:04d}] Estimating transform from camera to hand with focal length {f}..."
+                    )
                     transform_hand_pose_to_robot_cam, keypoints_2d = (
                         self.hand_reconstructor_client.reconstruct_hand_pose(
                             image=live_image, focal_length=f
@@ -730,24 +734,42 @@ class Pipeline:
                         keypoints_2d_np[:, 1], 0, live_image_depth.height - 1
                     )
 
-                    # Extract the 3D values using the depth image
-                    # K = np.array(live_camera_info.K, dtype=np.float64).reshape(3, 3)
-                    # depth = imgmsg_to_cv2(live_image_depth)
-                    # keypoints_3d = self._points_2D_to_3D(
-                    #     intrinsic_matrix=K,
-                    #     depth_image=depth,
-                    #     points_2D=keypoints_2d_np,
-                    # )
+                    if cfg.use_camera_depth_for_hand_pose:
+                        # Only take the wrist keypoint for the translation estimation.
+                        # It is central in the hand and has a relatively stable depth value
+                        keypoints_2d_np = keypoints_2d_np[0:1]
 
-                    # Calculate the translation from the camera to the hand
-                    # translation_np = np.mean(keypoints_3d, axis=0)  # Take the average
+                        # Extract the 3D values using the depth image
+                        K = np.array(live_camera_info.K, dtype=np.float64).reshape(3, 3)
+                        depth = imgmsg_to_cv2(live_image_depth)
+                        keypoints_3d = self._points_2D_to_3D(
+                            intrinsic_matrix=K,
+                            depth_image=depth,
+                            points_2D=keypoints_2d_np,
+                        )
+                        # Calculate the translation from the camera to the hand
+                        translation_np = np.mean(keypoints_3d, axis=0)  # Take the average
 
-                    # Create the transform from camera to hand
-                    # transform_hand_to_camera = Transform()
-                    # transform_camera_to_hand.translation.x = translation_np[0]
-                    # transform_camera_to_hand.translation.y = translation_np[1]
-                    # transform_camera_to_hand.translation.z = translation_np[2]
-                    # transform_hand_to_camera.rotation = hand_orient_transform.rotation
+                        # Create the transform
+                        _transform_hand_pose_to_robot_cam = Transform()
+                        _transform_hand_pose_to_robot_cam.translation.x = translation_np[0]
+                        _transform_hand_pose_to_robot_cam.translation.y = translation_np[1]
+                        _transform_hand_pose_to_robot_cam.translation.z = translation_np[2]
+                        _transform_hand_pose_to_robot_cam.rotation = transform_hand_pose_to_robot_cam.rotation
+
+                        transform_hand_pose_to_robot_cam = _transform_hand_pose_to_robot_cam
+
+                # Perform temporal smoothing
+                hand_pose_history[i % self.cfg.hand_pose_history_size] = transformmsg_to_np(
+                    transform_hand_pose_to_robot_cam
+                )
+
+                if i < self.cfg.hand_pose_history_size:
+                    continue  # Skip the first few iterations until we have enough history
+
+                # Update the hand pose with the mean of the history
+                mean_hand_pose = np.mean(hand_pose_history, axis=0)
+                transform_hand_pose_to_robot_cam = np_to_transformmsg(mean_hand_pose)
 
                 # Calculate the transform from gripper to base
                 transform_camera_to_base = self._get_transform(
@@ -757,32 +779,49 @@ class Pipeline:
                 if cfg.debug.use_hand_pose_as_target:
                     # Use the hand pose as the target gripper pose
                     target_transform = self._concat_transforms(
-                        transform_hand_to_camera,
                         transform_camera_to_base,
+                        transform_hand_pose_to_robot_cam,
                     )
                 else:
                     target_transform = self._concat_transforms(
-                        self.transform_selected_grasp_to_hand_pose,
-                        transform_hand_to_camera,
                         transform_camera_to_base,
+                        transform_hand_pose_to_robot_cam,
+                        self.transform_selected_grasp_to_hand_pose,
                     )
                 if self.cfg.debug.log_verbose:
                     rospy.loginfo(
-                        f"[it {i:04d}] Transform from camera to hand:\n{transform_hand_to_camera}"
+                        f"[it {i:04d}] Transform from hand to camera:\n{transform_hand_pose_to_robot_cam}"
                     )
                     rospy.loginfo(f"[it {i:04d}] Target transform:\n{target_transform}")
 
-                # Publish the transform from base to gripper
-                tf_msg = TFMessage()
-                target_transform_stamped = TransformStamped()
-                target_transform_stamped.header.seq = i
-                target_transform_stamped.transform = target_transform
-                target_transform_stamped.header.frame_id = self.cfg.ros.frame_ids.base
-                target_transform_stamped.child_frame_id = self.cfg.ros.frame_ids.gripper
-                target_transform_stamped.header.stamp = rospy.Time.now()
-                tf_msg.transforms.append(target_transform_stamped)
+
+                # TODO: Remove this
+                # p = np.eye(4)
+                # trans = np.array([0.5, 0.0, 0.5])
+                # rot = np.array([[ -0.4480736,  0.0000000,  0.8939967],
+                #     [0.0000000,  1.0000000,  0.0000000],
+                #     [-0.8939967,  0.0000000, -0.4480736 ]])
+                # p[:3, 3] = trans
+                # p[:3, :3] = rot
+                # temp = np_to_transformmsg(p)
+                # target_transform_stamped = TransformStamped()
+                # target_transform_stamped.header.stamp = rospy.Time.now()
+                # target_transform_stamped.header.frame_id = "panda_link0"
+                # target_transform_stamped.transform = target_pose
+                # target_pose = transformmsg_to_posemsg_stamped(target_transform_stamped)
+
+                # Publish the target pose
+                target_pose = PoseStamped()
+                target_pose.header.seq = i
+                target_pose.header.frame_id = self.cfg.ros.frame_ids.base
+                target_pose.header.stamp = rospy.Time.now()
+                target_pose.pose.position.x = target_transform.translation.x
+                target_pose.pose.position.y = target_transform.translation.y
+                target_pose.pose.position.z = target_transform.translation.z
+                target_pose.pose.orientation = target_transform.rotation
+
                 try:
-                    self.transform_publisher.publish(tf_msg)
+                    self.transform_publisher.publish(target_pose)
                     rospy.loginfo(f"[it {i:04d}] Published target transform.")
                 except Exception as e:
                     rospy.logerr(
@@ -791,15 +830,12 @@ class Pipeline:
 
                 # Publish a marker for the gripper pose
                 if self.cfg.debug.publish_marker:
-                    pose = transformmsg_to_posemsg_stamped(target_transform_stamped)
-
                     self._mark_grasp(
-                        pose=pose,
+                        pose=target_pose,
                         id=i,
                         camera_frame=self.cfg.ros.frame_ids.camera,
                     )
                     rospy.loginfo(f"[it {i:04d}] Published marker for gripper pose.")
-                i += 1
         except Exception as e:
             rospy.loginfo(f"Main loop interrupted with exception: {e}")
 
@@ -834,6 +870,8 @@ class Pipeline:
     def _concat_transforms(self, *transforms: Transform) -> Transform:
         """
         Concatenate multiple transforms and return the resulting transform.
+        Attention: The order matters! The first transform is applied first, 
+        then the second, and so on.
         Args:
             *transforms (Transform): The transforms to concatenate.
         Returns:

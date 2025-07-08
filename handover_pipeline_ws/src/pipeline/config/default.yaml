@@ -8,7 +8,7 @@ ros:
     transform_selected_grasp_to_robot_cam: "/selected_grasp_marker"  # Contains the gripper pose in the robot camera frame
   published_topics:
     out_dir: "/out_dir"  # Contains the output directory path for saving results
-    transform_base_to_gripper: "/target_tf"  # Contains the target base -> gripper transform
+    target_gripper_pose: "/target_gripper_pose"  # Contains the target gripper pose in the robot base frame
     marker: "/target_grasp_marker"  # Contains the marker for visualization
   frame_ids:
     base: "panda_link0"  # Frame ID for the robot base
@@ -51,7 +51,14 @@ try_mirrored_image: false
 camera_info_source: "robot_camera"
 
 # If true, the heuristic transform estimation will be used instead of solving the PnP problem. It is more robust, but less accurate.
-use_heuristic_transform_estimation: true  
+use_heuristic_transform_estimation: false
+
+# If true, the translation of the hand pose extracted by the hand reconstructor will be overwritten by the measured value from the camera depth image.
+# This can help to stabilize the predicted pose. This setting only applies to the main loop, not to the initialization phase.
+use_camera_depth_for_hand_pose: true
+
+# Number of hand poses to keep in the history for smoothing the target hand pose.
+hand_pose_history_size: 3
 
 debug:
   # All output data will be saved in a folder in this base directory.
@@ -73,9 +80,9 @@ debug:
   # If true, the correspondence estimator will not be called, and example data will be used instead.
   bypass_correspondence_estimator: true
   # If true, the hand reconstructor will not be called, and example data will be used instead.
-  bypass_hand_reconstructor: false
+  bypass_hand_reconstructor: true
   # If true, the grasp -> object transform estimator will not be called, and example data will be used instead.
-  bypass_transform_estimator: false
+  bypass_transform_estimator: true
   # If true, the object -> gripper transform subscriber will not be used, and example data will be used instead.
   bypass_transform_subscriber: true
   # If true, the node will just run the initialization phase and exit.
