@@ -1,0 +1,16 @@
+# Goal
+sensor_msgs/CameraInfo object_camera_info  # Camera info for the object image
+sensor_msgs/Image object_image_depth  # Depth image of the object
+std_msgs/Int32MultiArray corr_points_object  # Corresponding points in the object image, shape (N,2), height before width coordinate
+std_msgs/Int32MultiArray corr_points_grasp  # Corresponding points in the grasp image, shape (N,2), height before width coordinate
+geometry_msgs/Transform transform_hand_pose_to_camera  # Only the rotation is used
+std_msgs/Int32MultiArray hand_keypoints # Keypoints in the hand image, shape (21,2), only the wrist keypoint is used, width before height coordinate
+---
+# Result
+bool success
+std_msgs/Float32 cost  # cost value for the matching (lower is better)
+geometry_msgs/Transform transform_hand_pose_to_robot_camera  # Transformation from the hand pose to the robot camera frame
+---
+# Feedback
+float32 percent_complete
+string status

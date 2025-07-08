@@ -69,6 +69,7 @@ find_package(catkin REQUIRED COMPONENTS
 add_action_files(
   FILES
   EstimateTransform.action
+  EstimateTransformHeuristic.action
   # other action files can be added here
 )
 

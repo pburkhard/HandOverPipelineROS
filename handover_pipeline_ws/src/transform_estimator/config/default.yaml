@@ -1,9 +1,12 @@
 ros:
-  node_name: transform_estimator
+  node_name: "transform_estimator"  # Name of the ROS node
+  actions:
+    estimate_transform: estimate_transform  # Use PnP to estimate the transform
+    estimate_transform_heuristic: estimate_transform_heuristic  # Heuristic method to estimate the transform
 
 lambda_proj: 10  # lambda for projection loss
 lambda_dist: 0.1  # lambda for distance loss
-noise_std: 5 # standard deviation of the expected noise in the image points in pixels
+noise_std: 30 # standard deviation of the expected noise in the image points in pixels
 
 debug:
   # All output data will be saved to the output directory.

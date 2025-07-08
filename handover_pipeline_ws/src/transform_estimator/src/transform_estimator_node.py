@@ -10,6 +10,7 @@ import open3d
 import os
 from scipy.optimize import minimize, NonlinearConstraint, least_squares
 from scipy.spatial.transform import Rotation
+from sklearn.decomposition import PCA
 import sys
 from typing import Tuple
 import rospy
@@ -21,6 +22,7 @@ from msg_utils import (
     imgmsg_to_cv2,
     multiarraymsg_to_np,
     np_to_transformmsg,
+    transformmsg_to_np,
 )
 
 from sensor_msgs.msg import CameraInfo
@@ -30,6 +32,10 @@ from transform_estimator.msg import (
     EstimateTransformResult,
     EstimateTransformFeedback,
     EstimateTransformGoal,
+    EstimateTransformHeuristicAction,
+    EstimateTransformHeuristicResult,
+    EstimateTransformHeuristicFeedback,
+    EstimateTransformHeuristicGoal,
 )
 
 
@@ -42,9 +48,17 @@ class TransformEstimator:
         self._feedback = EstimateTransformFeedback()
         self._result = EstimateTransformResult()
         self._server = actionlib.SimpleActionServer(
-            cfg.ros.node_name,
+            cfg.ros.actions.estimate_transform,
             EstimateTransformAction,
             execute_cb=self._execute,
+            auto_start=False,
+        )
+        self._feedback_heuristic = EstimateTransformHeuristicFeedback()
+        self._result_heuristic = EstimateTransformHeuristicResult()
+        self._server_heuristic = actionlib.SimpleActionServer(
+            cfg.ros.actions.estimate_transform_heuristic,
+            EstimateTransformHeuristicAction,
+            execute_cb=self._execute_heuristic,
             auto_start=False,
         )
 
@@ -79,7 +93,8 @@ class TransformEstimator:
         self.n_requests = 0  # Keep track of the number of requests
 
         self._server.start()
-        rospy.loginfo(f"{cfg.ros.node_name} action server started.")
+        self._server_heuristic.start()
+        rospy.loginfo(f"action servers started.")
 
     def _execute(self, goal: EstimateTransformGoal):
         """
@@ -174,13 +189,12 @@ class TransformEstimator:
             rospy.loginfo(f"Estimating transformation with focal length: {f:.4f}")
 
             try:
-                transform_robot_cam_to_gen_cam, cost = self.ransac_pnp(
+                transform_robot_cam_to_gen_cam, cost = self.ransac_pnp_robust(
                     intrinsic_matrix=K_grasp,
                     points_image=corr_points_grasp[
                         :, [1, 0]
                     ],  # Use (width, height) for OpenCV
                     points_3D=corr_points_object_3D,
-                    n_points=None,
                 )
                 costs.append(cost)
                 transforms.append(transform_robot_cam_to_gen_cam)
@@ -242,12 +256,146 @@ class TransformEstimator:
         # Set the result and mark the action as succeeded
         self._result.success = True
         self._result.mse = Float32(cost)
-        self._result.transform_grasp_to_object = np_to_transformmsg(
-            np.linalg.inv(transform_robot_cam_to_gen_cam)
-        )
+        self._result.transform_robot_cam_to_gen_cam = np_to_transformmsg(transform_robot_cam_to_gen_cam)
         self._result.grasp_camera_info = CameraInfo()
         self._result.grasp_camera_info.K = K_grasp.flatten().tolist()
         self._server.set_succeeded(self._result)
+
+    def _execute_heuristic(self, goal: EstimateTransformHeuristicGoal):
+        """
+        Callback function for the heuristic action server. It estimates the transformation
+        from the hand pose to the robot camera frame based on the provided data. This method
+        uses a heuristic approach based on the wrist keypoint and hand orientation.
+        """
+        rospy.loginfo(f"Received heuristic goal.")
+
+        # Validate the goal
+        if (
+            not goal.object_camera_info
+            or not goal.object_image_depth
+            or not goal.corr_points_object
+            or not goal.corr_points_grasp
+            or not goal.transform_hand_pose_to_camera
+            or not goal.hand_keypoints
+        ):
+            rospy.logerr("Invalid heuristic goal: Missing required fields.")
+            self._result_heuristic.success = False
+            self._server_heuristic.set_aborted()
+            return
+
+        self.n_requests += 1
+
+        K_object = np.array(goal.object_camera_info.K, dtype=np.float64).reshape(3, 3)
+        object_image_depth = imgmsg_to_cv2(goal.object_image_depth)
+        corr_points_object = multiarraymsg_to_np(goal.corr_points_object)
+        corr_points_grasp = multiarraymsg_to_np(goal.corr_points_grasp)
+        wrist_keypoint = multiarraymsg_to_np(goal.hand_keypoints).reshape(-1, 2)[0,[1,0]]  # Extract wrist (first keypoint)
+        hand_orient = transformmsg_to_np(goal.transform_hand_pose_to_camera)[:3, :3] # Extract rotation part
+
+        self._feedback_heuristic.status = "Estimating 3D points..."
+        self._feedback_heuristic.percent_complete = 0.0
+        self._server_heuristic.publish_feedback(self._feedback_heuristic)
+
+        # Lift the 2D points from the object camera frame into the 3D space
+        corr_points_object_3D = self.get_3D_points(
+            K_object, object_image_depth, corr_points_object
+        )
+        if self.cfg.debug.log_verbose:
+            rospy.loginfo(
+                f"Extracted 3D points of object (in meters):\n{corr_points_object_3D}"
+            )
+
+        # The depth image can be corrupted, cause some 3D points being zero, filter those out
+        valid_idx = np.any(corr_points_object_3D != 0, axis=1)
+        corr_points_grasp = corr_points_grasp[valid_idx]
+        corr_points_object = corr_points_object[valid_idx]
+        corr_points_object_3D = corr_points_object_3D[valid_idx]
+        if valid_idx.shape[0] != corr_points_object.shape[0]:
+            rospy.logwarn(
+                f"Filtered out correspondence points due to corrupted depth image. {corr_points_object.shape[0]} points remaining."
+            )
+
+        rospy.loginfo("Extracted object points in 3D")
+        if self.cfg.debug.log_3d_points:
+            path = os.path.join(
+                self.out_dir, f"(te)_corr_points_object_3D_{self.n_requests:04d}.npy"
+            )
+            np.save(path, corr_points_object_3D)
+        if self.cfg.debug.log_visualization:
+            path = os.path.join(
+                self.out_dir, f"(te)_3d_reconstruction_object_{self.n_requests:04d}.png"
+            )
+            self.save_3d_reconstruction_visualization(
+                intrinsic_matrix=K_object,
+                points_3D=corr_points_object_3D,
+                points_2D=corr_points_object,
+                output_path=path,
+            )
+
+        self._feedback_heuristic.status = "Estimating transformation..."
+        self._feedback_heuristic.percent_complete = 50.0
+        self._server_heuristic.publish_feedback(self._feedback_heuristic)
+
+        #####################################################################################
+        # We fake data to test the heuristic method. TODO: Remove this
+
+        # N_points = 15
+        # corr_points_object_3D = corr_points_object_3D[:N_points]  # Use only the first N points
+        # corr_points_grasp = corr_points_grasp[:N_points]  # Use only the first N points
+
+        # points_3d = np.array([[1,0,10], [0, 5, 10], [-1, 0, 10], [0, -5, 10], [0, 17, 10]], dtype=np.float32)
+        # corr_points_object_3D = points_3d[:-1]  # Use all but the last point
+        # tvec = np.array([-3, 2, 0], dtype=np.float32)  # Fake translation vector
+        # rvec = np.array([0, 0, 0], dtype=np.float32) * np.pi / 180 # Fake rotation vector (identity)
+        # transform = self._get_transform_euler(translation=tvec, rotation_euler=rvec)
+        # transformed_points = self._apply_transformation(
+        #     points_3d, transform
+        # )
+        # K= np.array([[1000, 0, 0], [0, 1000, 0], [0, 0, 1]], dtype=np.float32)
+        # corr_points_grasp = self.project_points_to_pixels(transformed_points[:-1], K)
+        # wrist_keypoint = self.project_points_to_pixels(transformed_points[-1:], K)[0]  # Project a point at (0, 0, 10) to pixel coordinates
+        # # hand_orient = np.eye(3, dtype=np.float32)  # Identity rotation for the hand orientation
+        # rvec = np.array([0, 0, 0], dtype=np.float32)  # Identity rotation vector
+        # hand_orient = Rotation.from_euler('xyz', rvec, degrees=True).as_matrix().astype(np.float32)
+
+        # print(f"Fake 3D points in object frame:\n{corr_points_object_3D}")
+        # print(f"Fake 2D points in grasp frame:\n{corr_points_grasp}")
+        # print(f"Fake wrist keypoint in pixel coordinates: {wrist_keypoint}")
+        # print(f"Fake hand orientation:\n{hand_orient}")
+        #####################################################################################
+
+
+        # Estimate the transformation using the heuristic method
+        try:
+            transform_hand_pose_to_robot_camera, cost = self.estimate_transformation_heuristic(
+                points_image=corr_points_grasp,
+                wrist_keypoint=wrist_keypoint,
+                hand_global_orient=hand_orient,
+                points_3D=corr_points_object_3D,
+            )
+        except Exception as e:
+            rospy.logerr(f"Heuristic transformation estimation failed: {e}")
+            self._result_heuristic.success = False
+            self._server_heuristic.set_aborted()
+            return
+        
+        rospy.loginfo(f"Estimated transform with cost: {cost:.4f}")
+        if self.cfg.debug.log_verbose:
+            rospy.loginfo(
+                f"Estimated transformation matrix (hand pose to robot camera):\n{transform_hand_pose_to_robot_camera}"
+            )
+
+        # Publish feedback
+        self._feedback_heuristic.status = "Transformation estimation completed."
+        self._feedback_heuristic.percent_complete = 100
+        self._server_heuristic.publish_feedback(self._feedback_heuristic)
+        rospy.loginfo("Transformation estimation completed.")
+
+        # Set the result and mark the action as succeeded
+        self._result_heuristic.success = True
+        self._result_heuristic.cost = Float32(cost)
+        self._result_heuristic.transform_hand_pose_to_robot_camera = np_to_transformmsg(transform_hand_pose_to_robot_camera)
+        self._server_heuristic.set_succeeded(self._result_heuristic)
 
     def reconstruct_tranformation(
         self, source_points: np.ndarray, target_points: np.ndarray
@@ -297,7 +445,7 @@ class TransformEstimator:
     def ransac_pnp_robust(
         self,
         intrinsic_matrix: np.ndarray,
-        image_points: np.ndarray,
+        points_image: np.ndarray,
         points_3D: np.ndarray,
     ) -> Tuple[np.ndarray, float]:
         # 1. Adaptive threshold
@@ -305,7 +453,7 @@ class TransformEstimator:
         # 2. MAGSAC++ for robust outlier handling
         success, rvec, tvec, inliers = cv2.solvePnPRansac(
             objectPoints=points_3D.astype(np.float32),
-            imagePoints=image_points.astype(np.float32),
+            imagePoints=points_image.astype(np.float32),
             cameraMatrix=intrinsic_matrix.astype(np.float32),
             distCoeffs=None,
             flags=cv2.USAC_MAGSAC,
@@ -320,7 +468,7 @@ class TransformEstimator:
             )
         inliers = inliers.flatten()
         points_3D_inliers = points_3D[inliers]
-        image_points_inliers = image_points[inliers]
+        image_points_inliers = points_image[inliers]
         # 3. Refine using OpenCV VVS refinement
         rvec, tvec = cv2.solvePnPRefineVVS(
             objectPoints=points_3D_inliers.astype(np.float32),
@@ -352,7 +500,7 @@ class TransformEstimator:
             points_3D_final = points_3D_inliers
             image_points_final = image_points_inliers
         # 5. Robust nonlinear refinement with Huber loss
-        rvec, tvec = self.refine_pose_robust(
+        rvec, tvec = self._refine_pose_robust(
             points_3D_final, image_points_final, intrinsic_matrix, rvec, tvec
         )
         rotation_matrix, _ = cv2.Rodrigues(rvec)
@@ -370,7 +518,7 @@ class TransformEstimator:
         reprojection_error = np.mean(
             np.linalg.norm(projected_points[:, 0, :] - image_points_final, axis=1)
         )
-        print(f"RANSAC PnP inliers: {len(inliers)} from {len(image_points)} total points")
+        print(f"RANSAC PnP inliers: {len(inliers)} from {len(points_image)} total points")
         return transformation_matrix, reprojection_error
 
 
@@ -545,6 +693,194 @@ class TransformEstimator:
                 "Projected 3D points",
             )
         return transformation_matrix, reprojection_error
+
+    def estimate_transformation_heuristic(
+        self,
+        points_image: np.ndarray,
+        wrist_keypoint: np.ndarray,
+        hand_global_orient: np.ndarray,
+        points_3D: np.ndarray,
+    ) -> Tuple[np.ndarray, float]:
+        """
+        Estimates the transformation matrix using a heuristic approach based on the
+        centroid of the points and the principal axes of the point clouds.
+
+        Args:
+            points_image (np.ndarray): Nx2 array of 2D image points in pixel coordinates
+                The first column is the height and the second column is the width.
+            wrist_keypoint (np.ndarray): 2D coordinates of the wrist keypoint in pixel
+                The first column is the height and the second column is the width.
+            hand_global_orient (np.ndarray): 3D orientation as a (3,3) rotation matrix,
+                specified in the (virtual) camera frame that has taken the image with the
+                points_image and the wrist_keypoint.
+            points_3D (np.ndarray): Nx3 array of 3D points in meters, the frame in which
+                the coordinates are expressed is arbitrary.
+
+        Returns:
+            Tuple[np.ndarray, float]: The estimated transformation from the center of the
+                image point cloud (interpreted as 3D point) to the origin of the 3D points,
+                which coincides with the object camera frame. Additionally, a sanity value
+                is returned (lower is better).
+        """
+        # frame 1: Coordinate frame in which the 3D points are expressed
+        # frame 2: Coordinate frame defined by the principal axes of the 3D points, originating in the centroid of the 3D points
+        # frame 3: Coordinate frame defined by the principal axes of the image points, originating in the centroid of the image points (pixel coordinates)
+        # frame 4: Coordinate frame in which the image points are expressed (pixel coordinates),
+        # frame 5: Coordinate frame defined by the hand pose, originating in the wrist keypoint
+        # We want the transformation from frame 5 to frame 1
+        # Between frame 2 and 3, there is a scaling factor
+
+        points_image = points_image.astype(np.float32)[:,[1,0]] # flip to (width, height) format
+        wrist_keypoint = wrist_keypoint.astype(np.float32)[[1,0]] # flip to (width, height) format
+        hand_global_orient = hand_global_orient
+        points_3D = points_3D.astype(np.float32)
+
+        # Calculate centroids
+        centroid_image = np.mean(points_image, axis=0)  # in pixel coords (2D)
+        centroid_3D = np.mean(points_3D, axis=0)  # in meters (3D)
+
+        # Perform PcA to find the principal axes
+        pca_points_3D = PCA()
+        pca_points_3D.fit(points_3D)
+        points_3D_axes = pca_points_3D.components_
+        pca_image_points = PCA()
+        pca_image_points.fit(points_image)
+        image_point_axes = pca_image_points.components_
+
+        # Get the wrist keypoint in the principal axes frame (still in pixel coordinates)
+        wrist_keypoint_frame3 = (wrist_keypoint - centroid_image) @ image_point_axes.T
+
+        # Align the orientation of the principal axes (they might point in opposite directions)
+        points_image_frame3 = (points_image - centroid_image) @ image_point_axes.T
+        points_3D_frame2 = (points_3D - centroid_3D) @ points_3D_axes.T
+        unique_pairs = [(i, j) for i in range(len(points_3D)) for j in range(i)]
+        n_consensus_x = 0
+        n_consensus_y = 0
+        for i, j in unique_pairs:
+            if (points_3D_frame2[i, 0] - points_3D_frame2[j, 0] < 0 and \
+               points_image_frame3[i, 0] - points_image_frame3[j, 0] < 0) or \
+                (points_3D_frame2[i, 0] - points_3D_frame2[j, 0] > 0 and \
+                points_image_frame3[i, 0] - points_image_frame3[j, 0] > 0):
+                n_consensus_x += 1
+            if (points_3D_frame2[i, 1] - points_3D_frame2[j, 1] < 0 and \
+               points_image_frame3[i, 1] - points_image_frame3[j, 1] < 0) or \
+                (points_3D_frame2[i, 1] - points_3D_frame2[j, 1] > 0 and \
+                points_image_frame3[i, 1] - points_image_frame3[j, 1] > 0):
+                n_consensus_y += 1
+        
+        flip_x = n_consensus_x < len(unique_pairs) / 2
+        flip_y = n_consensus_y < len(unique_pairs) / 2
+        if flip_x:
+            points_image_frame3[:, 0] *= -1
+            wrist_keypoint_frame3[0] *= -1
+            rospy.logwarn("Flipping x-axis of image points and wrist keypoint")
+        if flip_y:
+            points_image_frame3[:, 1] *= -1
+            wrist_keypoint_frame3[1] *= -1
+            rospy.logwarn("Flipping y-axis of image points and wrist keypoint")
+
+        if self.cfg.debug.log_verbose:
+            rospy.loginfo(f" x consensus: {float(n_consensus_x) / len(unique_pairs)}, y consensus: {float(n_consensus_y) / len(unique_pairs)}")
+
+        if self.cfg.debug.log_visualization:
+            # Visualize the principal axes of the 3D points and image points
+            path = os.path.join(
+                self.out_dir, f"(te)_points_3D_in_principal_coords{self.n_requests:04d}.png"
+            )
+            self.save_2d_visualization(
+                points1=points_3D_frame2,
+                points2=np.array([[0,0]]),  # Origin for the principal axes
+                output_path=path,
+                label1="3D points in principal axes frame",
+                label2="Origin of principal axes",
+            )
+            self.save_2d_visualization(
+                points1=points_image_frame3,
+                points2=np.array([[0,0]]),  # Origin for the principal axes
+                output_path=path.replace("points_3D", "image_points"),
+                label1="Image points in principal axes frame",
+                label2="Origin of principal axes",
+            )
+
+        # Scale the wrist keypoint and lift it to the 3D space
+        scale_factor = np.sqrt(pca_points_3D.explained_variance_[0]) / np.sqrt(pca_image_points.explained_variance_[0])
+        wrist_keypoint_frame2 = np.zeros(3, dtype=np.float32)
+        wrist_keypoint_frame2[:2] = wrist_keypoint_frame3 * scale_factor
+
+        # Formulate the hand pose in the frame 2
+        hand_pose_frame2 = np.eye(4)
+        hand_pose_frame2[:3, :3] = hand_global_orient  # Set rotation part
+        hand_pose_frame2[:3, 3] = wrist_keypoint_frame2
+
+        # Get the hand pose in frame 1
+        tf_frame2_to_frame1 = np.eye(4)
+        tf_frame2_to_frame1[:3, :3] = points_3D_axes.T
+        tf_frame2_to_frame1[:3, 3] = centroid_3D
+
+        # Finally, get the hand pose in frame 1
+        hand_pose = tf_frame2_to_frame1 @ hand_pose_frame2
+
+        if self.cfg.debug.log_optimization_results:
+            path = os.path.join(
+                self.out_dir, f"(te)_transformation_heuristic_{self.n_requests:04d}.yaml"
+            )
+            with open(path, "w") as f:
+                yaml.dump(
+                    {
+                        "transformation_matrix": hand_pose.tolist(),
+                        "centroid_image": centroid_image.tolist(),
+                        "centroid_3D": centroid_3D.tolist(),
+                        "scale_factor": scale_factor.tolist(),
+                    },
+                    f,
+                )
+                
+        if self.cfg.debug.log_visualization:
+            # Scale the points and lift them to the 3D space
+            points_image_frame2 = np.zeros((points_image_frame3.shape[0], 3), dtype=np.float32)
+            points_image_frame2[:, :2] = points_image_frame3 * scale_factor
+
+            path = os.path.join(
+                self.out_dir, f"(te)_hand_pose_in_principal_axes_{self.n_requests:04d}.png"
+            )
+            self.save_2d_visualization(
+                points1=points_3D_frame2[:, :2],
+                points2=points_image_frame2[:, :2],
+                output_path=path,
+                label1="3D points in principal axes frame",
+                label2="Image points in principal axes frame",
+            )
+
+            # Get the points in frame 1
+            points_image_frame1 = self._apply_transformation(
+                points_image_frame2, tf_frame2_to_frame1
+            )
+
+            path = os.path.join(
+                self.out_dir, f"(te)_heuristic_transformation_{self.n_requests:04d}.png"
+            )
+            self.save_heuristic_transform_visualization(
+                points_3D=points_3D,
+                points_image_3D=points_image_frame1,
+                hand_pose=hand_pose,
+                output_path=path,
+            )
+
+            path = os.path.join(
+                self.out_dir, f"(te)_wrist_keypoint_{self.n_requests:04d}.png"
+            )
+            self.save_2d_visualization(
+                points1=points_image,
+                points2=wrist_keypoint.reshape(1, 2),
+                output_path=path,
+                label1="Image points",
+                label2="Wrist keypoint",
+            )
+
+        # TODO: Return a sensible cost value
+        cost = 0
+
+        return hand_pose, cost
 
     def estimate_all(
         self,
@@ -1658,7 +1994,6 @@ class TransformEstimator:
     def plot_2d_points(
         self, points1: np.ndarray, points2: np.ndarray, label1=None, label2=None
     ):
-        assert len(points1) == len(points2)
         fig = plt.figure()
         ax = fig.gca()
         ax.scatter(points1[:, 0], points1[:, 1], c="blue", label=label1)
@@ -1666,6 +2001,7 @@ class TransformEstimator:
         labels = [f"P{i}" for i in range(len(points1))]
         for i in range(len(points1)):
             ax.text(points1[i, 0], points1[i, 1], f"P{i}", color="blue", fontsize=10)
+        for i in range(len(points2)):
             ax.text(points2[i, 0], points2[i, 1], f"P{i}", color="red", fontsize=10)
         ax.set_xlabel("X")
         ax.set_xlabel("Y")
@@ -1802,6 +2138,114 @@ class TransformEstimator:
             points1=points1, points2=points2, label1=label1, label2=label2
         )
         plt.savefig(output_path)
+        plt.close()
+
+    def save_heuristic_transform_visualization(
+        self,
+        points_3D: np.ndarray,
+        points_image_3D: np.ndarray,
+        hand_pose: np.ndarray,
+        output_path: str,
+    ):
+        """
+        Saves a visualization of the heuristic transformation estimation process.
+
+        Args:
+            points_3D (np.ndarray): Nx3 array of 3D points in their original frame.
+            points_image_3D (np.ndarray): Nx3 array of the image points in the same frame as points_3D.
+            hand_pose (np.ndarray): 4x4 transformation matrix representing the hand pose.
+            principal_axes_3D (np.ndarray): Nx3 array of the principal axes of the 3D points
+            output_path (str): Path to save the visualization.
+        """
+        fig = plt.figure()
+        ax = fig.add_subplot(111, projection="3d")
+
+        # Plot original 3D points
+        ax.scatter(points_3D[:, 0], points_3D[:, 1], points_3D[:, 2], c="blue", label="3D Points", s=50)
+        for i, pt in enumerate(points_3D):
+            ax.text(pt[0], pt[1], pt[2], f"P{i}", color="blue", fontsize=10)
+
+        # Plot image points transformed to 3D
+        ax.scatter(points_image_3D[:, 0], points_image_3D[:, 1], points_image_3D[:, 2], c="red", label="Image Points (3D)", s=50, marker="^")
+        for i, pt in enumerate(points_image_3D):
+            ax.text(pt[0], pt[1], pt[2], f"I{i}", color="red", fontsize=10)
+
+        # Plot principal axes
+        pca = PCA()
+        pca.fit(points_3D)
+        mean_point = np.mean(points_3D, axis=0)
+        bbox_size = np.linalg.norm(points_3D.max(axis=0) - points_3D.min(axis=0))
+        axis_length = 0.2 * bbox_size  # scale for visibility
+
+        for i, axis in enumerate(pca.components_[:2]):
+            ax.quiver(
+            mean_point[0], mean_point[1], mean_point[2],
+            axis[0], axis[1], axis[2],
+            color="orange", length=axis_length, normalize=True, label=f"Principal Axis {i+1}"
+            )
+            # Place label at the tip of the axis
+            tip = mean_point + axis * axis_length
+            ax.text(tip[0], tip[1], tip[2], f"A{i+1}", color="orange", fontsize=10)
+
+        # Plot principal axes of the image points
+        # pca_image = PCA()
+        # pca_image.fit(points_image_3D)
+        # mean_image_point = np.mean(points_image_3D, axis=0)
+        # for i, axis in enumerate(pca_image.components_[:2]):
+        #     ax.quiver(
+        #         mean_image_point[0], mean_image_point[1], mean_image_point[2],
+        #         axis[0], axis[1], axis[2],
+        #         color="purple", length=axis_length, normalize=True, label=f"Image Axis {i+1}"
+        #     )
+        #     # Place label at the tip of the axis
+        #     tip = mean_image_point + axis * axis_length
+        #     ax.text(tip[0], tip[1], tip[2], f"IA{i+1}", color="purple", fontsize=10)
+
+        # Plot hand pose axes
+        origin = hand_pose[:3, 3]
+        axes = hand_pose[:3, :3]
+        bbox_size = np.linalg.norm(points_3D.max(axis=0) - points_3D.min(axis=0))
+        length = 0.05 * bbox_size  # scale for visibility
+
+        ax.quiver(
+            origin[0], origin[1], origin[2],
+            axes[0, 0], axes[1, 0], axes[2, 0],
+            color="r", length=length, normalize=True, label="Hand X"
+        )
+        ax.quiver(
+            origin[0], origin[1], origin[2],
+            axes[0, 1], axes[1, 1], axes[2, 1],
+            color="g", length=length, normalize=True, label="Hand Y"
+        )
+        ax.quiver(
+            origin[0], origin[1], origin[2],
+            axes[0, 2], axes[1, 2], axes[2, 2],
+            color="b", length=length, normalize=True, label="Hand Z"
+        )
+
+        # Set equal scaling for all axes
+        xyz = np.vstack((points_3D, points_image_3D, origin.reshape(1, 3)))
+        xyz_min = xyz.min(axis=0)
+        xyz_max = xyz.max(axis=0)
+        max_range = (xyz_max - xyz_min).max() / 2.0
+        mid = (xyz_max + xyz_min) / 2.0
+        ax.set_xlim(mid[0] - max_range, mid[0] + max_range)
+        ax.set_ylim(mid[1] - max_range, mid[1] + max_range)
+        ax.set_zlim(mid[2] - max_range, mid[2] + max_range)
+
+        ax.set_xlabel("X")
+        ax.set_ylabel("Y")
+        ax.set_zlabel("Z")
+        ax.legend()
+        plt.title("Heuristic Transform Visualization")
+        plt.tight_layout()
+        plt.savefig(output_path)
+        # Save additional perspectives
+        base, ext = os.path.splitext(output_path)
+        ax.view_init(elev=0, azim=-90)
+        plt.savefig(f"{base}_top_view{ext}")
+        ax.view_init(elev=-90, azim=90, roll=180)
+        plt.savefig(f"{base}_camera_view{ext}")
         plt.close()
 
     def _out_dir_callback(self, msg: String):
