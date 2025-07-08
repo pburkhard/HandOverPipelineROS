@@ -1,0 +1,26 @@
+ros:
+  node_name: "motion_executor"  # Name of the ROS node
+  subscribed_topics:
+    target_pose: "/target_gripper_pose"  # Contains the target base -> gripper transform
+    trigger: "/start_motion"  # Trigger topic to start the motion execution
+    measured_pose: "/cartesian_impedance_example_controller/measured_pose"  # Current pose of the gripper in 3D space
+  published_topics:
+    target_pose: "/cartesian_impedance_example_controller/equilibrium_pose"  # Control the pose of the gripper in 3D space
+  actions:
+    gripper_control: "/franka_gripper/move/"  # Control the gripper itself
+
+phase_1_target_distance: 0.2  # Anticipated distance to the target pose after completing phase 1 (in meters)
+target_tolerance: 0.05  # Allowed tolerance for the target pose (in meters)
+average_over_n_poses: 5  # Number of poses to average for phase 1
+planning_timeout: 15.0  # Timeout for planning in seconds
+
+# If true, the target pose will be fixed for the whole motion once the trigger is received. Else, phase 2 adapts to changes in target pose.
+fix_target_pose: true
+
+debug:
+  # All output data will be saved to the output directory.
+  # The directory can be set to a fixed path or dynamically set via the out_dir_topic.
+  out_dir_mode: "topic"  # Options: "fixed", "topic"
+  out_dir_topic: "/out_dir"  # Topic to set the output directory dynamically (if out_dir_mode is "topic")
+  out_dir_fixed: "/home/franka/HandOverPipelineROS/outputs/" # Fixed output directory path (if out_dir_mode is "fixed")
+  log_config: True # log the configuration used for the grasp generator

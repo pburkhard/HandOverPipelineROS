@@ -1,0 +1,16 @@
+name: grasp_generator
+channels:
+  - defaults
+dependencies:
+  - python=3.12
+  - pip
+  - pip:
+    - catkin_pkg
+    - empy
+    - hydra-core
+    - numpy
+    - omegaconf
+    - opencv-python
+    - rospkg
+    - pyassimp
+    - moveit_commander
