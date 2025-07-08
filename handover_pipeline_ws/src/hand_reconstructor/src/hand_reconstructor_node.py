@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import copy
 import cv2
 from dotenv import load_dotenv
 from detectron2.config import LazyConfig
@@ -201,6 +202,9 @@ class HandReconstructor:
         image = imgmsg_to_cv2(request.image)
         estimation = self.estimate_hand_poses(image)
 
+        if estimation["n_hands"] != 1:
+            rospy.logwarn(f"Detected {estimation['n_hands']} hands")
+
         if self.cfg.debug.log_visualization.reconstruct_hand:
             path = Path(self.out_dir) / f"(hr)_hand_mesh_{self.n_requests:04d}.png"
             self.save_mesh_visualization(
@@ -282,8 +286,8 @@ class HandReconstructor:
         # Extract the transform
         rotation = estimation["hand_global_orient"][0, 0, ...]  # Shape (3, 3)
         translation = (
-            estimation["pred_keypoints_3d"][0, 0, :]
-            + estimation["pred_cam_t_global"][0, :]
+            # estimation["pred_keypoints_3d"][0, 0, :]
+            estimation["pred_cam_t_global"][0, :]
         )  # Shape (3,)
         transform_matrix = np.eye(4)
         transform_matrix[:3, :3] = rotation
@@ -793,6 +797,8 @@ class HandReconstructor:
             np.ndarry: the original image with all predicted hands rendered
                 in it.
         """
+
+        estimation = copy.deepcopy(estimation)  # Avoid modifying the original dict
 
         # Open the original image and get the size
         img_size = torch.tensor(
