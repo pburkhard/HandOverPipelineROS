@@ -92,7 +92,7 @@ class HandReconstructorClient:
                 rospy.logerr("Hand pose reconstruction failed.")
                 return None, None
             rospy.loginfo("Hand pose reconstruction completed successfully.")
-            return (response.transform_camera_to_hand, response.keypoints_2d)
+            return (response.transform_hand_to_camera, response.keypoints_2d)
         except rospy.ServiceException as e:
             rospy.logerr(f"Service call failed: {e}")
             return None, None

@@ -14,6 +14,8 @@ ros:
     reconstruct_hand_pose: "reconstruct_hand_pose"  # Service to reconstruct the hand pose from a given image
     estimate_camera: "estimate_camera"  # Service to estimate the camera parameters
     render_hand: "render_hand"  # Service to render the reconstructed hand
+  published_topics:
+    mesh_image: "/reconstructed_hand_mesh" # Publish an image with the reconstructed hand mesh
 
 debug:
   # All output data will be saved to the output directory.
@@ -25,5 +27,7 @@ debug:
   log_detections: false  # Log the detected hand and body probabilities (Attention: If true, data will be logged in every iteration of the main loop!)
   log_visualization:
     reconstruct_hand_pose: false  # Log a visualization of the reconstructed hand pose for the reconstruction service (Attention: If true, data will be logged in every iteration of the main loop!)
-    reconstruct_hand: true  # Log a visualization of the reconstructed hand for the reconstruction service (This service will only be called up to once in the initialization step)
+    reconstruct_hand: false  # Log a visualization of the reconstructed hand for the reconstruction service (This service will only be called up to once in the initialization step)
     estimate_camera: false  # Log a visualization of the estimated camera parameters for the camera estimation service (Attention: If true, data will be logged in every iteration of the main loop!)
+  publish_visualization:
+    reconstruct_hand_pose: true

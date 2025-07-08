@@ -3,6 +3,6 @@ sensor_msgs/Image image
 std_msgs/Float32 focal_length  # The estimated focal length of the (virtual) grasp camera
 ---
 # Response
-geometry_msgs/Transform transform_camera_to_hand
+geometry_msgs/Transform transform_hand_to_camera
 std_msgs/Int32MultiArray keypoints_2d # Keypoints in the hand image, shape (21,2)
 bool success

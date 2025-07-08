@@ -46,7 +46,7 @@ from hand_reconstructor.srv import (
     RenderHandResponse,
 )
 from std_msgs.msg import String, Int32MultiArray
-from sensor_msgs.msg import CameraInfo
+from sensor_msgs.msg import CameraInfo, Image
 
 
 class HandReconstructor:
@@ -175,6 +175,12 @@ class HandReconstructor:
             RenderHand,
             self._render_hand_callback,
         )
+        # Start the publisher
+        self._mesh_image_pub = rospy.Publisher(
+            self.cfg.ros.published_topics.mesh_image,
+            Image,
+            queue_size=1
+        )
         self.n_requests = 0  # Keep track of the number of requests
 
         rospy.loginfo(f"{cfg.ros.node_name} service initialized.")
@@ -273,6 +279,10 @@ class HandReconstructor:
                 image=image,
                 output_path=path,
             )
+        if self.cfg.debug.publish_visualization.reconstruct_hand_pose:
+            image_cv2 = self._get_mesh_visualization(estimation, image).astype(np.uint8)
+            image_msg = cv2_to_imgmsg(image_cv2, encoding="bgr8")
+            self._mesh_image_pub.publish(image_msg)
 
         # Check how many hands were detected
         if estimation["n_hands"] == 0:
@@ -286,13 +296,13 @@ class HandReconstructor:
         # Extract the transform
         rotation = estimation["hand_global_orient"][0, 0, ...]  # Shape (3, 3)
         translation = (
-            # estimation["pred_keypoints_3d"][0, 0, :]
-            estimation["pred_cam_t_global"][0, :]
+            estimation["pred_keypoints_3d"][0, 0, :]
+            + estimation["pred_cam_t_global"][0, :]
         )  # Shape (3,)
         transform_matrix = np.eye(4)
         transform_matrix[:3, :3] = rotation
         transform_matrix[:3, 3] = translation
-        transform_camera_to_hand = np_to_transformmsg(transform_matrix)
+        transform = np_to_transformmsg(transform_matrix)
 
         # Extract the 2D keypoints
         keypoints_2d_np = estimation["pred_keypoints_2d_full"][0, ...]  # Shape (21, 2)
@@ -302,7 +312,7 @@ class HandReconstructor:
         # Prepare the response
         response = ReconstructHandPoseResponse()
         response.success = True
-        response.transform_camera_to_hand = transform_camera_to_hand
+        response.transform_hand_to_camera = transform
         response.keypoints_2d = keypoints_2d
 
         rospy.loginfo("Hand pose reconstruction completed successfully.")
