@@ -750,6 +750,11 @@ class TransformEstimator:
         # Get the wrist keypoint in the principal axes frame (still in pixel coordinates)
         wrist_keypoint_frame3 = (wrist_keypoint - centroid_image) @ image_point_axes.T
 
+        # Get the hand orientation in the principal axes frame (in 3D -> we leave the z-axis as is)
+        image_point_axes_3D = np.eye(3, dtype=np.float32)
+        image_point_axes_3D[:2, :2] = image_point_axes
+        hand_global_orient_frame2 = hand_global_orient @ image_point_axes_3D.T
+
         # Align the orientation of the principal axes (they might point in opposite directions)
         points_image_frame3 = (points_image - centroid_image) @ image_point_axes.T
         points_3D_frame2 = (points_3D - centroid_3D) @ points_3D_axes.T
@@ -773,10 +778,12 @@ class TransformEstimator:
         if flip_x:
             points_image_frame3[:, 0] *= -1
             wrist_keypoint_frame3[0] *= -1
+            hand_global_orient_frame2[:, 0] *= -1  # Flip the x-axis of the hand orientation
             rospy.logwarn("Flipping x-axis of image points and wrist keypoint")
         if flip_y:
             points_image_frame3[:, 1] *= -1
             wrist_keypoint_frame3[1] *= -1
+            hand_global_orient_frame2[:, 1] *= -1  # Flip the y-axis of the hand orientation
             rospy.logwarn("Flipping y-axis of image points and wrist keypoint")
 
         if self.cfg.debug.log_verbose:
@@ -809,8 +816,39 @@ class TransformEstimator:
 
         # Formulate the hand pose in the frame 2
         hand_pose_frame2 = np.eye(4)
-        hand_pose_frame2[:3, :3] = hand_global_orient  # Set rotation part
+        hand_pose_frame2[:3, :3] = hand_global_orient_frame2  # Set rotation part
         hand_pose_frame2[:3, 3] = wrist_keypoint_frame2
+
+        if self.cfg.debug.log_visualization:
+            points_image_frame4_3D = np.zeros((points_image.shape[0], 3), dtype=np.float32)
+            points_image_frame4_3D[:, :2] = points_image
+            wrist_keypoint_frame4_3D = np.zeros(3, dtype=np.float32)
+            wrist_keypoint_frame4_3D[:2] = wrist_keypoint
+            hand_pose_matrix = np.eye(4, dtype=np.float32)
+            hand_pose_matrix[:3, :3] = hand_global_orient
+            hand_pose_matrix[:3, 3] = wrist_keypoint_frame4_3D
+            path = os.path.join(
+                self.out_dir, f"(te)_hand_pose_image_coords_{self.n_requests:04d}.png"
+            )
+            self.save_heuristic_transform_visualization(
+                points_3D=points_image_frame4_3D,
+                points_image_3D=points_image_frame4_3D,
+                hand_pose=hand_pose_matrix,
+                output_path=path,
+            )
+
+            # Scale the points and lift them to the 3D space
+            points_image_frame2 = np.zeros((points_image_frame3.shape[0], 3), dtype=np.float32)
+            points_image_frame2[:, :2] = points_image_frame3 * scale_factor
+            path = os.path.join(
+                    self.out_dir, f"(te)_hand_pose_in_principal_cords_{self.n_requests:04d}.png"
+                )
+            self.save_heuristic_transform_visualization(
+                points_3D=points_3D_frame2,
+                points_image_3D=points_image_frame2,
+                hand_pose=hand_pose_frame2,
+                output_path=path,
+            )
 
         # Get the hand pose in frame 1
         tf_frame2_to_frame1 = np.eye(4)
@@ -836,10 +874,6 @@ class TransformEstimator:
                 )
                 
         if self.cfg.debug.log_visualization:
-            # Scale the points and lift them to the 3D space
-            points_image_frame2 = np.zeros((points_image_frame3.shape[0], 3), dtype=np.float32)
-            points_image_frame2[:, :2] = points_image_frame3 * scale_factor
-
             path = os.path.join(
                 self.out_dir, f"(te)_hand_pose_in_principal_axes_{self.n_requests:04d}.png"
             )

@@ -6,16 +6,28 @@ ros:
     measured_pose: "/cartesian_impedance_example_controller/measured_pose"  # Current pose of the gripper in 3D space
   published_topics:
     target_pose: "/cartesian_impedance_example_controller/equilibrium_pose"  # Control the pose of the gripper in 3D space
+    marker: "motion_goal_marker"  # Contains the marker for visualization
   actions:
     gripper_control: "/franka_gripper/move/"  # Control the gripper itself
+  services:
+    switch_controller: "/controller_manager/switch_controller"  # Service to switch controllers
+    unload_controller: "/controller_manager/unload_controller"  # Service to unload a controller
+    load_controller: "/controller_manager/load_controller"  # Service to load a controller
+    get_gripper_pose: "/get_grippper_pose"  # Service to get the current gripper pose
+  frames:
+    camera: "camera_color_optical_frame"  # Frame ID for the camera
 
-phase_1_target_distance: 0.2  # Anticipated distance to the target pose after completing phase 1 (in meters)
-target_tolerance: 0.05  # Allowed tolerance for the target pose (in meters)
-average_over_n_poses: 5  # Number of poses to average for phase 1
+phase_1_target_distance: 0.2 # Anticipated distance to the target pose after completing phase 1 (in meters)
+phase_2_rate: 20 # In Hz
+
+phase_2_max_vel: 0.05 # Maximum allowed velocity in phase 2 (in meters per second). The robot is guaranteed to not exceed this velocity, but the actual velocity may be lower.
+phase_2_max_rot_vel: 0.3 # Maximum angular velocity in phase 2 (in radians per second). The robot is guaranteed to not exceed this velocity, but the actual velocity may be lower.
+target_tolerance: 0.1  # Allowed tolerance for the target pose (in meters). If the robot is within this distance to the target pose, it is considered to have reached the target.
+average_over_n_poses: 5  # Number of target poses to average over for smoothing the target pose. Set to 1 to disable smoothing.
 planning_timeout: 15.0  # Timeout for planning in seconds
 
 # If true, the target pose will be fixed for the whole motion once the trigger is received. Else, phase 2 adapts to changes in target pose.
-fix_target_pose: true
+fix_target_pose: false
 
 debug:
   # All output data will be saved to the output directory.
