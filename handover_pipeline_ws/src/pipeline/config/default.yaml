@@ -87,10 +87,14 @@ debug:
   bypass_transform_subscriber: true
   # If true, the transform from selected grasp to hand pose will be loaded from a file and overwrites the one calculated during the initialization phase. 
   load_init_results_from_file: false
+  # If true, the node will directly run the main loop without going through the initialization phase
+  skip_initaization_phase: false
   # If true, the node will just run the initialization phase and exit.
-  skip_main_loop: true
+  skip_main_loop: false
   # If true, the target pose is set equal to the hand pose, effectively ignoring the transform calculated during the initialization phase.
   use_hand_pose_as_target: false
+  # If true, the target position is set to equal to the hand position, while the target orientation is calculated from the transform determined during the initialization phase.
+  use_hand_position_as_target: false
   # If true, the main loop will publish a marker additional to the target transform for visualization.
   publish_marker: true
   # If true, verbose information will be logged during the main loop execution.
