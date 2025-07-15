@@ -424,17 +424,20 @@ class Pipeline:
             object_image_mirrored = cv2_to_imgmsg(
                 object_image_mirrored_np, encoding="bgr8"
             )
+            # Feel free to extend the list of object images and operations
             object_images = [self.object_image, object_image_mirrored]
+            operations = ["none", "mirrored_horizontally"]
             rospy.loginfo(
                 "Running correspondence estimator twice: With mirrored object images."
             )
         else:
             object_images = [self.object_image]
+            operations = ["none"]
 
         transforms = []
         cam_info_list = []
         cost_list = []
-        for object_image in object_images:
+        for object_image, operation in zip(object_images, operations):
             # Estimate correspondence
             if self.cfg.debug.bypass_correspondence_estimator:
                 rospy.loginfo("Bypassing correspondence estimator. Using example data.")
@@ -457,6 +460,18 @@ class Pipeline:
                         object_description=self.object_description,
                     )
                 )
+                # Apply post-transformations if needed
+                if operation == "none":
+                    pass
+                elif operation == "mirrored_horizontally":
+                    points = multiarraymsg_to_np(self.corr_points_object)
+                    points[:, 1] = object_image_np.shape[1] - points[:, 1] - 1
+                    self.corr_points_object = np_to_multiarraymsg(points, Int32MultiArray)
+                else:
+                    rospy.logerr(
+                        f"Invalid operation: {operation}. Supported operations are 'none' and 'mirrored_horizontally'."
+                    )
+                    return
                 rospy.loginfo("Correspondence estimation completed.")
 
             # Estimate the transform from the gen camera frame to the robot camera frame
@@ -640,14 +655,10 @@ class Pipeline:
                 # estimation_dict["scaled_focal_length"] = np.tile(
                 #     focal_length, n_hands
                 # ).reshape(-1, 1)
-                if idx == 1:
-                    object_image = object_image_mirrored
-                else:
-                    object_image = self.object_image
 
                 # call the renderer
                 out_image = self.hand_reconstructor_client.render_hand(
-                    object_image, estimation_dict
+                    self.object_image, estimation_dict
                 )
 
                 # Save the result
