@@ -3,10 +3,9 @@
     <arg name="python_path" value="$(arg pkg_path)/src/transform_estimator_node.py"/>
     <arg name="conda_env" value="transform_estimator"/>
     
-    <!-- Launch the node with updated conda environment activation -->
+    <!-- Launch the node in the correct conda environment -->
     <node name="transform_estimator" pkg="transform_estimator" type="activate_conda_env.sh" 
                 args="$(arg conda_env) $(arg python_path)" output="screen" respawn="false">
-        <param name="example_param" value="example_value"/>
         <env name="CONDA_PATH" value="$(env CONDA_PATH)" />
     </node>
 </launch>

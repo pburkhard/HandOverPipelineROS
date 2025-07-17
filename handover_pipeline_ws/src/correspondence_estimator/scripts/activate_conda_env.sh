@@ -1,5 +1,5 @@
 #!/bin/bash
-# Wrapper to activate a given conda environment and run a command
+# Wrapper to activate a given conda environment and run a given command afterwards.
 
 CONDA_PATH="${CONDA_PATH:-/opt/conda}"
 

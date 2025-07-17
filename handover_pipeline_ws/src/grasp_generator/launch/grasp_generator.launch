@@ -3,10 +3,9 @@
     <arg name="python_path" value="$(arg pkg_path)/src/grasp_generator_node.py"/>
     <arg name="conda_env" value="grasp_generator"/>
     
-    <!-- Launch the node with updated conda environment activation -->
+    <!-- Launch the node in the correct conda environment -->
     <node name="grasp_generator" pkg="grasp_generator" type="activate_conda_env.sh" 
                 args="$(arg conda_env) $(arg python_path)" output="screen" respawn="false">
-        <param name="example_param" value="example_value"/>
         <env name="CONDA_PATH" value="$(env CONDA_PATH)" />
     </node>
 </launch>

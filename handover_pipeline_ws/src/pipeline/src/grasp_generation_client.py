@@ -12,6 +12,8 @@ from grasp_generator.msg import (
 
 
 class GraspGenerationClient:
+    """Client for the grasp generation action server."""
+
     def __init__(self, cfg: DictConfig):
         self.cfg = cfg
 

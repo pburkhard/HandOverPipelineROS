@@ -1,5 +1,5 @@
 # Request
-sensor_msgs/Image image
+sensor_msgs/Image image  # Image containing the hand
 ---
 # Response
 std_msgs/String estimation_dict  # Serialized JSON string of all hand estimator results

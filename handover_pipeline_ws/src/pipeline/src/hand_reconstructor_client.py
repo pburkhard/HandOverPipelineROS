@@ -25,6 +25,7 @@ from std_msgs.msg import Float32, Int32MultiArray, String
 
 
 class HandReconstructorClient:
+    """Client for the hand reconstruction services."""
 
     def __init__(self, cfg: DictConfig):
         self.cfg = cfg
@@ -72,9 +73,11 @@ class HandReconstructorClient:
         except rospy.ServiceException as e:
             rospy.logerr(f"Service call failed: {e}")
             return None, None
-        
-    def reconstruct_hand_pose(self, image: Image, focal_length: float) -> Tuple[Transform, Int32MultiArray]:
-        """ Reconstruct the hand pose from the provided image. Waits for the
+
+    def reconstruct_hand_pose(
+        self, image: Image, focal_length: float
+    ) -> Tuple[Transform, Int32MultiArray]:
+        """Reconstruct the hand pose from the provided image. Waits for the
         service to complete and returns the result.
         Args:
             image: The image of the hand to reconstruct.
@@ -84,10 +87,14 @@ class HandReconstructorClient:
         """
 
         rospy.loginfo("Reconstructing hand pose...")
-        request = ReconstructHandPoseRequest(image=image, focal_length=Float32(focal_length))
+        request = ReconstructHandPoseRequest(
+            image=image, focal_length=Float32(focal_length)
+        )
 
         try:
-            response: ReconstructHandPoseResponse = self._reconstr_hand_pose_client(request)
+            response: ReconstructHandPoseResponse = self._reconstr_hand_pose_client(
+                request
+            )
             if not response.success:
                 rospy.logerr("Hand pose reconstruction failed.")
                 return None, None
@@ -116,7 +123,7 @@ class HandReconstructorClient:
         except rospy.ServiceException as e:
             rospy.logerr(f"Service call failed: {e}")
             return None
-        
+
     def render_hand(self, image: Image, estimation: dict) -> Image:
         """
         Render the hand on the provided image using the estimation data.

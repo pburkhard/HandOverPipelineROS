@@ -8,15 +8,14 @@ import numpy as np
 from omegaconf import DictConfig, OmegaConf
 import open3d
 import os
-from scipy.optimize import minimize, NonlinearConstraint, least_squares
-from scipy.spatial.transform import Rotation
+from scipy.optimize import least_squares
 from sklearn.decomposition import PCA
 import sys
 from typing import Tuple
 import rospy
 import yaml
 
-# TODO: Remove dependency on the pipeline package
+# Import custom message utilities from the pipeline package
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../pipeline/src/"))
 from msg_utils import (
     imgmsg_to_cv2,
@@ -40,6 +39,8 @@ from transform_estimator.msg import (
 
 
 class TransformEstimator:
+    """Class for estimating the transform between the robot camera frame and the gen camera frame."""
+
     def __init__(self, cfg: DictConfig):
         self.cfg = cfg
 
@@ -169,20 +170,11 @@ class TransformEstimator:
                 output_path=path,
             )
 
-        # transform_robot_cam_to_gen_cam, cost = self.estimate_transformation(
-        #     intrinsic_matrix=K_grasp,
-        #     points_image=corr_points_grasp,
-        #     points_3D=corr_points_object_3D,
-        #     n_points=None,
-        # )
-
         costs = []
         transforms = []
         focal_lengths = [
             float(K_grasp[0, 0] + K_grasp[1, 1]) / 2.0
-        ]  # TODO: Use a range of focal lengths
-
-        print(f"Initial focal lengths: {focal_lengths}")
+        ]  # We only try one value for the focal length. Feel free to add more values here.
 
         for f in focal_lengths:
             K_grasp[0, 0] = f
@@ -342,34 +334,6 @@ class TransformEstimator:
         self._feedback_heuristic.percent_complete = 50.0
         self._server_heuristic.publish_feedback(self._feedback_heuristic)
 
-        #####################################################################################
-        # We fake data to test the heuristic method. TODO: Remove this
-
-        # N_points = 15
-        # corr_points_object_3D = corr_points_object_3D[:N_points]  # Use only the first N points
-        # corr_points_grasp = corr_points_grasp[:N_points]  # Use only the first N points
-
-        # points_3d = np.array([[1,0,10], [0, 5, 10], [-1, 0, 10], [0, -5, 10], [0, 17, 10]], dtype=np.float32)
-        # corr_points_object_3D = points_3d[:-1]  # Use all but the last point
-        # tvec = np.array([-3, 2, 0], dtype=np.float32)  # Fake translation vector
-        # rvec = np.array([0, 0, 0], dtype=np.float32) * np.pi / 180 # Fake rotation vector (identity)
-        # transform = self._get_transform_euler(translation=tvec, rotation_euler=rvec)
-        # transformed_points = self._apply_transformation(
-        #     points_3d, transform
-        # )
-        # K= np.array([[1000, 0, 0], [0, 1000, 0], [0, 0, 1]], dtype=np.float32)
-        # corr_points_grasp = self.project_points_to_pixels(transformed_points[:-1], K)
-        # wrist_keypoint = self.project_points_to_pixels(transformed_points[-1:], K)[0]  # Project a point at (0, 0, 10) to pixel coordinates
-        # # hand_orient = np.eye(3, dtype=np.float32)  # Identity rotation for the hand orientation
-        # rvec = np.array([0, 0, 0], dtype=np.float32)  # Identity rotation vector
-        # hand_orient = Rotation.from_euler('xyz', rvec, degrees=True).as_matrix().astype(np.float32)
-
-        # print(f"Fake 3D points in object frame:\n{corr_points_object_3D}")
-        # print(f"Fake 2D points in grasp frame:\n{corr_points_grasp}")
-        # print(f"Fake wrist keypoint in pixel coordinates: {wrist_keypoint}")
-        # print(f"Fake hand orientation:\n{hand_orient}")
-        #####################################################################################
-
         # Estimate the transformation using the heuristic method
         try:
             transform_hand_pose_to_robot_camera, cost = (
@@ -405,51 +369,6 @@ class TransformEstimator:
             transform_hand_pose_to_robot_camera
         )
         self._server_heuristic.set_succeeded(self._result_heuristic)
-
-    def reconstruct_tranformation(
-        self, source_points: np.ndarray, target_points: np.ndarray
-    ):
-        """
-        Estimates the transformation matrix that aligns the source points with
-        the target points using open3d's registration method.
-
-        Args:
-            source_points (np.ndarray): Nx3 array of 3D points in the source frame.
-            target_points (np.ndarray): Nx3 array of 3D points in the target frame.
-        Returns:
-            np.ndarray: 4x4 transformation matrix.
-            float: Mean squared error between the transformed source points and target points.
-        """
-
-        n = len(source_points)
-        source = open3d.geometry.PointCloud()
-        target = open3d.geometry.PointCloud()
-        source.points = open3d.utility.Vector3dVector(source_points)
-        target.points = open3d.utility.Vector3dVector(target_points)
-
-        # Create correspondences explicitly (point i in source corresponds to point i in target)
-        correspondences = np.array([(i, i) for i in range(n)])
-
-        # TODO: Implement RANSAC if necessary
-        transformation = open3d.pipelines.registration.TransformationEstimationPointToPoint().compute_transformation(
-            source, target, open3d.utility.Vector2iVector(correspondences)
-        )
-
-        # Mean squared distance between transformed source and target points
-        source_homogeneous = np.hstack((source_points, np.ones((n, 1))))
-        source_transformed = (transformation @ source_homogeneous.T).T[:, :3]
-
-        mse = np.mean(np.linalg.norm(source_transformed - target_points, axis=1) ** 2)
-
-        if self.cfg.debug.log_transform_mse:
-            mse_path = os.path.join(
-                self.out_dir, f"(te)_mse_transformation_{self.n_requests:04d}.txt"
-            )
-            with open(mse_path, "w") as f:
-                f.write(f"Mean Squared Error: {mse:.4f}\n")
-            rospy.loginfo(f"Mean Squared Error saved to {mse_path}")
-
-        return transformation, mse
 
     def ransac_pnp_robust(
         self,
@@ -527,7 +446,7 @@ class TransformEstimator:
         reprojection_error = np.mean(
             np.linalg.norm(projected_points[:, 0, :] - image_points_final, axis=1)
         )
-        print(
+        rospy.loginfo(
             f"RANSAC PnP inliers: {len(inliers)} from {len(points_image)} total points"
         )
 
@@ -627,139 +546,6 @@ class TransformEstimator:
         rvec_refined = result.x[:3].reshape(3, 1)
         tvec_refined = result.x[3:].reshape(3, 1)
         return rvec_refined, tvec_refined
-
-    def ransac_pnp(
-        self,
-        intrinsic_matrix: np.ndarray,
-        points_image: np.ndarray,
-        points_3D: np.ndarray,
-        n_points: int = None,
-    ) -> Tuple[np.ndarray, float]:
-        """
-        Estimates the transformation matrix using RANSAC and PnP.
-
-        Args:
-            intrinsic_matrix (np.ndarray): 3x3 intrinsic camera matrix.
-            points_image (np.ndarray): Nx2 array of 2D image points in pixel coordinates.
-                The first column is the width and the second column is the height.
-            points_3D (np.ndarray): Nx3 array of 3D points in meters, the frame in which
-                the coordinates are expressed is arbitrary.
-            n_points (int, optional): Number of points to use for estimation. If None,
-                all points will be used.
-
-        Returns:
-            Tuple[np.ndarray, float]: The estimated transformation matrix and the final
-                value of the optimization function.
-        """
-
-        print(f"Points image shape: {points_image.shape}")
-        print(f"Points 3D shape: {points_3D.shape}")
-
-        # Get an initial guess using an iterative PnP method
-        success, rvec, tvec, inliers = cv2.solvePnPRansac(
-            objectPoints=points_3D.astype(np.float32),
-            imagePoints=points_image.astype(np.float32),
-            cameraMatrix=intrinsic_matrix.astype(np.float32),
-            distCoeffs=None,  # Assuming no lens distortion
-            useExtrinsicGuess=True,
-            flags=cv2.SOLVEPNP_ITERATIVE,
-            iterationsCount=10000,
-        )
-
-        print(f"RANSAC PnP success: {success}")
-        print(f"RANSAC PnP inliers: {inliers}")
-        print(f"RANSAC PnP rvec: {rvec}")
-        print(f"RANSAC PnP tvec: {tvec}")
-
-        # Refine by using the (nonlinear) VVS method
-        rvec, tvec = cv2.solvePnPRefineVVS(
-            objectPoints=points_3D.astype(np.float32),
-            imagePoints=points_image.astype(np.float32),
-            cameraMatrix=intrinsic_matrix.astype(np.float32),
-            distCoeffs=None,  # Assuming no lens distortion
-            rvec=rvec,
-            tvec=tvec,
-        )
-
-        print(f"RANSAC PnP rvec: {rvec}")
-        print(f"RANSAC PnP tvec: {tvec}")
-
-        if not success:
-            rospy.logerr("RANSAC PnP failed to estimate the transformation.")
-            raise ValueError(
-                "RANSAC PnP failed to estimate the transformation. "
-                "Check the input points and camera parameters."
-            )
-
-        # Convert rotation vector and translation vector to a transformation matrix
-        rotation_matrix, _ = cv2.Rodrigues(rvec)
-        transformation_matrix = np.eye(4)
-        transformation_matrix[:3, :3] = rotation_matrix
-        transformation_matrix[:3, 3] = tvec.flatten()
-
-        rospy.loginfo(
-            f"Solved PnP with {len(inliers)} inliers out of {len(points_3D)} points."
-        )
-
-        # Calculate the reprojection error
-        projected_points, _ = cv2.projectPoints(
-            objectPoints=points_3D[inliers].astype(np.float32),
-            rvec=rvec,
-            tvec=tvec,
-            cameraMatrix=intrinsic_matrix.astype(np.float32),
-            distCoeffs=None,  # Assuming no lens distortion
-        )
-        reprojection_error = np.mean(
-            np.linalg.norm(projected_points[:, 0, :] - points_image[inliers], axis=1)
-        )
-
-        if self.cfg.debug.log_optimization_results:
-            results_path = os.path.join(
-                self.out_dir,
-                f"(te)_transform_estimation_results_{self.n_requests:04d}.yaml",
-            )
-            with open(results_path, "w") as f:
-                yaml.dump(
-                    {
-                        "transformation_matrix": transformation_matrix.tolist(),
-                        "translation": tvec.flatten().tolist(),
-                        "rotation_vector": rvec.flatten().tolist(),
-                        "reprojection_error": reprojection_error.tolist(),
-                        "inliers": inliers.flatten().tolist(),
-                    },
-                    f,
-                )
-            rospy.loginfo(f"RANSAC PnP results saved to {results_path}")
-
-        if self.cfg.debug.log_verbose:
-            rospy.loginfo(f"Estimated translation vector:\n{tvec.flatten()}")
-            rospy.loginfo(f"Estimated rotation vector:\n{rvec.flatten()}")
-
-        if self.cfg.debug.log_visualization:
-            points_image = points_image[:, [1, 0]]  # Swap x,y for visualization
-            normalized_points = self._pixel_to_normalized(
-                intrinsic_matrix, points_image
-            )
-
-            points_3D_transformed = self._apply_transformation(
-                points_3D, transformation_matrix
-            )
-            projected_points = (
-                points_3D_transformed[:, :2] / points_3D_transformed[:, 2, np.newaxis]
-            )
-
-            path = os.path.join(
-                self.out_dir,
-                f"(te)_point_projection_final_{self.n_requests:04d}.png",
-            )
-            self.save_2d_visualization(
-                normalized_points,
-                projected_points,
-                path,
-                "Keypoints of grasp image",
-                "Projected 3D points",
-            )
-        return transformation_matrix, reprojection_error
 
     def estimate_transformation_heuristic(
         self,
@@ -1004,706 +790,7 @@ class TransformEstimator:
                 label2="Wrist keypoint",
             )
 
-        # TODO: Return a sensible cost value
-        cost = 0
-
-        return hand_pose, cost
-
-    def estimate_all(
-        self,
-        intrinsic_matrix: np.ndarray,
-        points_image: np.ndarray,
-        points_3D: np.ndarray,
-        n_points: int = None,
-        f_init: float = None,
-    ) -> Tuple[float, np.ndarray, float]:
-        """
-        Estimates the focal length of the camera by minimizing the reprojection error.
-
-        Args:
-            intrinsic_matrix (np.ndarray): 3x3 intrinsic camera matrix. The focal length
-                entry is taken as the initial guess if f_init is None.
-            points_image (np.ndarray): Nx2 array of 2D image points in pixel coordinates.
-            points_3D (np.ndarray): Nx3 array of 3D points in meters, the frame in which
-                the coordinates are expressed is arbitrary.
-            f_init (float, optional): Initial guess for the focal length. If None,
-                it will be set to the focal length from the intrinsic matrix.
-
-        Returns:
-            Tuple[float, np.ndarray, float]: The optimal focal length, the optimal
-                transform from the (real) robot camera frame to the (virtual)
-                gen camera frame and the final value of the optimization function.
-        """
-
-        points_image = points_image.astype(np.float32)
-        points_3D = points_3D.astype(np.float32)
-
-        # Constrain the number of points
-        if n_points:
-            if n_points > len(points_3D):
-                rospy.logerr(f"Too large number of points given: {n_points}")
-                return None
-            points_image = points_image[:n_points, :]
-            points_3D = points_3D[:n_points, :]
-        else:
-            n_points = len(points_image)
-
-        if len(points_3D) != len(points_image):
-            rospy.logerr(
-                f"Number of 3D points ({len(points_3D)}) and 2D points ({len(points_image)}) is not equal"
-            )
-        rospy.loginfo(f"Using {n_points} points for estimation.")
-
-        # Express the points w.r.t. to an anchor point (e.g., the first point)
-        # anchor_point = np.array([0,0,0])
-        anchor_point = points_3D[0]
-        points_3D_optim = points_3D - anchor_point
-
-        # Initial guess
-        f = f_init if f_init else intrinsic_matrix[0, 0]
-        translation = anchor_point
-        rotation_euler = np.array([0, 0, 0])
-        initial_params = np.hstack([f, translation, rotation_euler])
-
-        n_it = 0  # Keep track of number of function call
-
-        def _reprojection_cost(intrinsic_matrix, points_3d, log):
-            # Cost for reprojection error -> Project 3d points back to a fictional
-            # image plane at z = 1 and compare with the original normalized 2D points
-            normalized_points = self._pixel_to_normalized(
-                intrinsic_matrix, points_image
-            )
-
-            reprojection_cost = 0
-            projected_points = np.ndarray([n_points, 2])
-            for i in range(n_points):
-                if points_3d[i, 2] <= 0:  # Ensure points are in front of camera
-                    rospy.logwarn(f"[optim]: point {i} had negative z coordinate.")
-                    return -1e10 * points_3d[i, 2]
-                projected = points_3d[i, :2] / points_3d[i, 2]
-                reprojection_cost += np.sum((projected - normalized_points[i]) ** 2)
-                projected_points[i] = projected
-
-            nonlocal n_it
-            if n_it % 500 == 0 or log:
-                path = os.path.join(
-                    self.out_dir,
-                    f"(te)_point_projection_k{n_it:04d}.png",
-                )
-                self.save_2d_visualization(
-                    normalized_points,
-                    projected_points,
-                    path,
-                    "Keypoints of grasp image",
-                    "Projected 3D points",
-                )
-            n_it += 1
-
-            return reprojection_cost
-
-        def _objective_function(params, log=False):
-            f = params[0]
-            translation = params[1:4]
-            rotation_euler = params[4:7]
-
-            # Transform points from the 3D points in the (real) object camera frame
-            # to the (virtual) gen camera frame
-            tf = self._get_transform_euler(
-                translation=translation, rotation_euler=rotation_euler
-            )
-            if log:
-                rospy.loginfo(f"(obj fun) transform:\n{tf}")
-            points_3D_transformed = self._apply_transformation(points_3D_optim, tf)
-
-            # Update the intrinsic matrix with the current focal length
-            intrinsic_matrix[0, 0] = f
-            intrinsic_matrix[1, 1] = f
-            # print(f"Using focal length: {f:.4f}")
-
-            # Get cost
-            return self.cfg.lambda_proj * _reprojection_cost(
-                intrinsic_matrix, points_3D_transformed, log
-            )
-
-        # Run optimization
-        result = minimize(_objective_function, initial_params, method="Newton-CG")
-
-        # Extract the results
-        cost = float(result.fun)
-        focal_length = float(result.x[0])
-        intrinsic_matrix[0, 0] = focal_length
-        intrinsic_matrix[1, 1] = focal_length
-
-        # Calculate the transform
-        translation = result.x[1:4]
-        rotation_euler = result.x[4:7]
-        transform_anchor_to_gen_cam = self._get_transform_euler(
-            translation=translation, rotation_euler=rotation_euler
-        )
-        transform_robot_cam_to_anchor = np.eye(4)
-        transform_robot_cam_to_anchor[:3, 3] = -anchor_point
-        transform_robot_cam_to_gen_cam = (
-            transform_anchor_to_gen_cam @ transform_robot_cam_to_anchor
-        )
-
-        points_3D_gen_frame = self._apply_transformation(
-            points_3D, transform_robot_cam_to_gen_cam
-        )
-        translation_final = transform_robot_cam_to_gen_cam[:3, 3]
-        rotation_final = Rotation.from_matrix(
-            transform_robot_cam_to_gen_cam[:3, :3]
-        ).as_euler("xyz")
-
-        # Log the results
-        if self.cfg.debug.log_optimization_results:
-            path = os.path.join(
-                self.out_dir,
-                f"(te)_transform_estimation_results_{self.n_requests:04d}.yaml",
-            )
-            with open(path, "w") as f:
-                yaml.dump(
-                    {
-                        "lambda_proj": float(self.cfg.lambda_proj),
-                        "reprojection_cost": float(
-                            _reprojection_cost(
-                                intrinsic_matrix, points_3D_gen_frame, False
-                            )
-                        ),
-                        "objective_function_value": cost,
-                        "optimal focal_length": focal_length,
-                        "optimal translation (optimization problem)": translation.tolist(),
-                        "optimal rotation (optimization problem)": rotation_euler.tolist(),
-                        "optimal translation (robot cam frame to gen cam frame)": translation_final.tolist(),
-                        "optimal rotation (robot cam frame to gen cam frame)": rotation_final.tolist(),
-                        # "optimal transformation from real camera to gen camera": transform_robot_cam_to_gen_cam.tolist(),
-                        # "intrinsic_matrix": intrinsic_matrix.tolist(),
-                        "message": str(result.message),
-                        "n_function_evaluations": int(result.nfev),
-                        "n_iterations": int(result.nit),
-                        "status": int(result.status),
-                        "success": bool(result.success),
-                    },
-                    f,
-                )
-        if self.cfg.debug.log_visualization:
-            normalized_points = self._pixel_to_normalized(
-                intrinsic_matrix, points_image
-            )
-            # points_3D = points_3D + anchor_point
-            # points_3D_transformed = self._apply_transformation(points_3D_optim, transform_robot_cam_to_gen_cam)
-            points_3D_transformed = self._apply_transformation(
-                points_3D, transform_robot_cam_to_gen_cam
-            )
-            projected_points = (
-                points_3D_transformed[:, :2] / points_3D_transformed[:, 2, np.newaxis]
-            )
-
-            path = os.path.join(
-                self.out_dir,
-                f"(te)_point_projection_final_{self.n_requests:04d}.png",
-            )
-            self.save_2d_visualization(
-                normalized_points,
-                projected_points,
-                path,
-                "Keypoints of grasp image",
-                "Projected 3D points",
-            )
-
-        return focal_length, transform_robot_cam_to_gen_cam, cost
-
-    def estimate_transformation(
-        self,
-        intrinsic_matrix: np.ndarray,
-        points_image: np.ndarray,
-        points_3D: np.ndarray,
-        n_points: int = None,
-    ) -> Tuple[float, np.ndarray, float]:
-        """
-        TODO
-
-        Args:
-            intrinsic_matrix (np.ndarray): 3x3 intrinsic camera matrix. The focal length
-                entry is taken as the initial guess if f_init is None.
-            points_image (np.ndarray): Nx2 array of 2D image points in pixel coordinates.
-            points_3D (np.ndarray): Nx3 array of 3D points in meters, the frame in which
-                the coordinates are expressed is arbitrary.
-
-        Returns:
-            Tuple[np.ndarray, float]: The optimal transform from the (real) robot camera
-            frame to the (virtual) gen camera frame and the final value of the
-            optimization function.
-        """
-
-        points_image = points_image.astype(np.float32)
-        points_3D = points_3D.astype(np.float32)
-
-        # Constrain the number of points
-        if n_points:
-            if n_points > len(points_3D):
-                rospy.logerr(f"Too large number of points given: {n_points}")
-                return None
-            points_image = points_image[:n_points, :]
-            points_3D = points_3D[:n_points, :]
-        else:
-            n_points = len(points_image)
-
-        if len(points_3D) != len(points_image):
-            rospy.logerr(
-                f"Number of 3D points ({len(points_3D)}) and 2D points ({len(points_image)}) is not equal"
-            )
-        rospy.loginfo(f"Using {n_points} points for estimation.")
-
-        # Express the points w.r.t. to an anchor point (e.g., the first point)
-        # anchor_point = np.array([0,0,0])
-        anchor_point = points_3D[0]
-        points_3D_optim = points_3D - anchor_point
-
-        # Initial guess
-        translation = anchor_point
-        rotation_euler = np.array([0, 0, 0])
-        initial_params = np.hstack([translation, rotation_euler])
-
-        # project the keypoints on a plane at z = 1
-        normalized_points = self._pixel_to_normalized(intrinsic_matrix, points_image)
-        n_it = 0  # Keep track of number of function call
-
-        def _reprojection_cost(points_3d, log):
-            # Cost for reprojection error -> Project 3d points back to a fictional
-            # image plane at z = 1 and compare with the original normalized 2D points
-
-            reprojection_cost = 0
-            projected_points = np.ndarray([n_points, 2])
-            for i in range(n_points):
-                if points_3d[i, 2] <= 0:  # Ensure points are in front of camera
-                    rospy.logwarn(f"[optim]: point {i} had negative z coordinate.")
-                    return -1e10 * points_3d[i, 2]
-                projected = points_3d[i, :2] / points_3d[i, 2]
-                reprojection_cost += np.sum((projected - normalized_points[i]) ** 2)
-                projected_points[i] = projected
-
-            nonlocal n_it
-            if n_it % 500 == 0 or log:
-                path = os.path.join(
-                    self.out_dir,
-                    f"(te)_point_projection_k{n_it:04d}.png",
-                )
-                self.save_2d_visualization(
-                    normalized_points,
-                    projected_points,
-                    path,
-                    "Keypoints of grasp image",
-                    "Projected 3D points",
-                )
-            n_it += 1
-
-            return reprojection_cost
-
-        def _objective_function(params, log=False):
-            translation = params[:3]
-            rotation_euler = params[3:6]
-
-            # Transform points from the 3D points in the (real) object camera frame
-            # to the (virtual) gen camera frame
-            tf = self._get_transform_euler(
-                translation=translation, rotation_euler=rotation_euler
-            )
-            if log:
-                rospy.loginfo(f"(obj fun) transform:\n{tf}")
-            points_3D_transformed = self._apply_transformation(points_3D_optim, tf)
-
-            # Get cost
-            return self.cfg.lambda_proj * _reprojection_cost(points_3D_transformed, log)
-
-        # Run optimization
-        # result = minimize(_objective_function, initial_params, method="BFGS")
-        result = minimize(_objective_function, initial_params, method="Powell")
-
-        # Extract the results
-        cost = float(result.fun)
-
-        # Calculate the transform
-        translation = result.x[:3]
-        rotation_euler = result.x[3:6]
-        transform_anchor_to_gen_cam = self._get_transform_euler(
-            translation=translation, rotation_euler=rotation_euler
-        )
-        transform_robot_cam_to_anchor = np.eye(4)
-        transform_robot_cam_to_anchor[:3, 3] = -anchor_point
-        transform_robot_cam_to_gen_cam = (
-            transform_anchor_to_gen_cam @ transform_robot_cam_to_anchor
-        )
-
-        points_3D_gen_frame = self._apply_transformation(
-            points_3D, transform_robot_cam_to_gen_cam
-        )
-        translation_final = transform_robot_cam_to_gen_cam[:3, 3]
-        rotation_final = Rotation.from_matrix(
-            transform_robot_cam_to_gen_cam[:3, :3]
-        ).as_euler("xyz")
-
-        # Log the results
-        if self.cfg.debug.log_optimization_results:
-            path = os.path.join(
-                self.out_dir,
-                f"(te)_transform_estimation_results_{self.n_requests:04d}.yaml",
-            )
-            with open(path, "w") as f:
-                yaml.dump(
-                    {
-                        "lambda_proj": float(self.cfg.lambda_proj),
-                        "reprojection_cost": float(
-                            _reprojection_cost(points_3D_gen_frame, False)
-                        ),
-                        "objective_function_value": cost,
-                        "optimal translation (optimization problem)": translation.tolist(),
-                        "optimal rotation (optimization problem)": rotation_euler.tolist(),
-                        "optimal translation (robot cam frame to gen cam frame)": translation_final.tolist(),
-                        "optimal rotation (robot cam frame to gen cam frame)": rotation_final.tolist(),
-                        "message": str(result.message),
-                        "n_function_evaluations": int(result.nfev),
-                        "n_iterations": int(result.nit),
-                        "status": int(result.status),
-                        "success": bool(result.success),
-                    },
-                    f,
-                )
-        if self.cfg.debug.log_visualization:
-            normalized_points = self._pixel_to_normalized(
-                intrinsic_matrix, points_image
-            )
-            # points_3D = points_3D + anchor_point
-            # points_3D_transformed = self._apply_transformation(points_3D_optim, transform_robot_cam_to_gen_cam)
-            points_3D_transformed = self._apply_transformation(
-                points_3D, transform_robot_cam_to_gen_cam
-            )
-            projected_points = (
-                points_3D_transformed[:, :2] / points_3D_transformed[:, 2, np.newaxis]
-            )
-
-            path = os.path.join(
-                self.out_dir,
-                f"(te)_point_projection_final_{self.n_requests:04d}.png",
-            )
-            self.save_2d_visualization(
-                normalized_points,
-                projected_points,
-                path,
-                "Keypoints of grasp image",
-                "Projected 3D points",
-            )
-
-        return transform_robot_cam_to_gen_cam, cost
-
-    def estimate_focal_length(
-        self,
-        intrinsic_matrix: np.ndarray,
-        points_image: np.ndarray,
-        points_3D: np.ndarray,
-        n_points: int = None,
-        f_init: float = None,
-    ) -> Tuple[float, np.ndarray, float]:
-        """
-        Estimates the focal length of the camera by minimizing the reprojection error.
-
-        Args:
-            intrinsic_matrix (np.ndarray): 3x3 intrinsic camera matrix. The focal length
-                entry is taken as the initial guess if f_init is None.
-            points_image (np.ndarray): Nx2 array of 2D image points in pixel coordinates.
-            points_3D (np.ndarray): Nx3 array of 3D points in meters, the frame in which
-                the coordinates are expressed is arbitrary.
-            f_init (float, optional): Initial guess for the focal length. If None,
-                it will be set to the focal length from the intrinsic matrix.
-
-        Returns:
-            Tuple[float, np.ndarray, float]: The optimal focal length, the optimal
-                transform from the (real) robot camera frame to the (virtual)
-                gen camera frame and the final value of the optimization function.
-        """
-
-        points_image = points_image.astype(np.float32)
-        points_3D = points_3D.astype(np.float32)
-
-        # Constrain the number of points
-        if n_points:
-            if n_points > len(points_3D):
-                rospy.logerr(f"Too large number of points given: {n_points}")
-                return None
-            points_image = points_image[:n_points, :]
-            points_3D = points_3D[:n_points, :]
-        else:
-            n_points = len(points_image)
-
-        if len(points_3D) != len(points_image):
-            rospy.logerr(
-                f"Number of 3D points ({len(points_3D)}) and 2D points ({len(points_image)}) is not equal"
-            )
-        rospy.loginfo(f"Using {n_points} points for estimation.")
-
-        # Initial guess
-        f = f_init if f_init else intrinsic_matrix[0, 0]
-        initial_params = np.hstack([f])
-
-        n_it = 0  # Keep track of number of function call
-
-        def _reprojection_cost(intrinsic_matrix, points_3d, log):
-            # Cost for reprojection error -> Project 3d points back to a fictional
-            # image plane at z = 1 and compare with the original normalized 2D points
-            normalized_points = self._pixel_to_normalized(
-                intrinsic_matrix, points_image
-            )
-
-            reprojection_cost = 0
-            projected_points = np.ndarray([n_points, 2])
-            for i in range(n_points):
-                if points_3d[i, 2] <= 0:  # Ensure points are in front of camera
-                    rospy.logwarn(f"[optim]: point {i} had negative z coordinate.")
-                    return -1e10 * points_3d[i, 2]
-                projected = points_3d[i, :2] / points_3d[i, 2]
-                reprojection_cost += np.sum((projected - normalized_points[i]) ** 2)
-                projected_points[i] = projected
-
-            nonlocal n_it
-            if n_it % 500 == 0 or log:
-                path = os.path.join(
-                    self.out_dir,
-                    f"(te)_point_projection_(f)_k{n_it:04d}.png",
-                )
-                self.save_2d_visualization(
-                    normalized_points,
-                    projected_points,
-                    path,
-                    "Keypoints of grasp image",
-                    "Projected 3D points",
-                )
-            n_it += 1
-
-            return reprojection_cost
-
-        def _objective_function(params, log=False):
-            f = params[0]
-
-            # Update the intrinsic matrix with the current focal length
-            intrinsic_matrix[0, 0] = f
-            intrinsic_matrix[1, 1] = f
-
-            # Get cost
-            return self.cfg.lambda_proj * _reprojection_cost(
-                intrinsic_matrix, points_3D, log
-            )
-
-        # Run optimization
-        result = minimize(_objective_function, initial_params, method="Powell")
-
-        # Extract the results
-        cost = float(result.fun)
-        focal_length = float(result.x[0])
-        intrinsic_matrix[0, 0] = focal_length
-        intrinsic_matrix[1, 1] = focal_length
-
-        # Log the results
-        if self.cfg.debug.log_optimization_results:
-            path = os.path.join(
-                self.out_dir,
-                f"(te)_focal_length_estimation_result_{self.n_requests:04d}.yaml",
-            )
-            with open(path, "w") as f:
-                yaml.dump(
-                    {
-                        "lambda_proj": float(self.cfg.lambda_proj),
-                        "reprojection_cost": float(
-                            _reprojection_cost(intrinsic_matrix, points_3D, False)
-                        ),
-                        "objective_function_value": cost,
-                        "optimal focal_length": focal_length,
-                        "message": str(result.message),
-                        "n_function_evaluations": int(result.nfev),
-                        "n_iterations": int(result.nit),
-                        "status": int(result.status),
-                        "success": bool(result.success),
-                    },
-                    f,
-                )
-        if self.cfg.debug.log_visualization:
-            normalized_points = self._pixel_to_normalized(
-                intrinsic_matrix, points_image
-            )
-            projected_points = points_3D[:, :2] / points_3D[:, 2, np.newaxis]
-
-            path = os.path.join(
-                self.out_dir,
-                f"(te)_point_projection_final_(f)_{self.n_requests:04d}.png",
-            )
-            self.save_2d_visualization(
-                normalized_points,
-                projected_points,
-                path,
-                "Keypoints of grasp image",
-                "Projected 3D points",
-            )
-
-        return focal_length, cost
-
-    def reconstruct_3d_points(
-        self,
-        intrinsic_matrix: np.ndarray,
-        image_points: np.ndarray,
-        relative_distances: dict,
-        initial_points_3D: np.ndarray = None,
-        optimize_focal_length: bool = True,
-    ) -> tuple[np.ndarray, float]:
-        """
-        Reconstructs 3D points from 2D image points using a pinhole camera model.
-        The reconstruction is done by minimizing the reprojection error and
-        enforcing distance constraints between points.
-
-        Args:
-            intrinsic_matrix (np.ndarray): 3x3 intrinsic camera matrix.
-            image_points (np.ndarray): Nx2 array of 2D image points.
-            relative_distances (dict): Dictionary with keys as tuples of point
-                indices and values as distances.
-                Example: {(0, 1): 2.0, (1, 2): 3.0}
-            initial_points_3D (np.ndarray): Nx3 array containing the inital
-                3D coordinates for the optimization.
-            optimize_focal_length (bool): Whether to treat the focal length
-                as an optimization parameter. If False, the focal length is
-                fixed to the value given in the intrinsic matrix.
-        Returns:
-            np.ndarray: Nx3 array of reconstructed 3D points.
-            float: Final cost of the optimization.
-        """
-        # image_points = image_points[:3,:]
-        # initial_points_3D = initial_points_3D[:3,:]
-        n_points = len(image_points)
-
-        # Initial guess
-        initial_focal_length = (
-            intrinsic_matrix[0, 0] if optimize_focal_length else np.nan
-        )
-        if initial_points_3D is None:
-            normalized_points = self._pixel_to_normalized(
-                intrinsic_matrix, image_points
-            )
-            initial_depths = np.linspace(1, 10, n_points)
-            initial_points_3D = np.empty((n_points, 3))
-            for i in range(n_points):
-                initial_points_3D[i] = (
-                    np.array([normalized_points[i, 0], normalized_points[i, 1], 1])
-                    * initial_depths[i]
-                )
-
-        # Flatten to 1D array for optimization: (f, x1, y1, z1, x2, y2, z2, ...)
-        initial_params = np.hstack((initial_focal_length, initial_points_3D.flatten()))
-
-        def _reprojection_cost(normalized_points, points_3d):
-            # Cost for reprojection error -> Project 3d points back to a fictional
-            # image plane at z = 1 and compare with the original normalized 2D points
-            reprojection_cost = 0
-            for i in range(n_points):
-                if points_3d[i, 2] <= 0:  # Ensure points are in front of camera
-                    return 1e10
-                projected = points_3d[i, :2] / points_3d[i, 2]
-                reprojection_cost += np.sum((projected - normalized_points[i]) ** 2)
-
-            return reprojection_cost
-
-        def _distance_cost(points_3d):
-            # Cost for distance constraints in 3D
-            distance_cost = 0
-            for i in range(n_points):
-                for j in range(i + 1, n_points):
-                    if (i, j) in relative_distances or (j, i) in relative_distances:
-                        key = (i, j) if (i, j) in relative_distances else (j, i)
-                        target_dist = relative_distances[key]
-                        actual_dist = np.linalg.norm(points_3d[i] - points_3d[j])
-                        distance_cost += (1.0 - float(actual_dist) / target_dist) ** 2
-
-            return distance_cost
-
-        def distance_constraint(params, i, j):
-            x = params[1:]
-            key = (i, j) if (i, j) in relative_distances else (j, i)
-            return (
-                np.linalg.norm(x[i * 3 : i * 3 + 3] - x[j * 3 : j * 3 + 3])
-                - relative_distances[key]
-            )
-
-        constraints = []
-        for i in range(n_points):
-            j = 0  # constrain on a single point
-            if (i, j) in relative_distances or (j, i) in relative_distances:
-                constr = NonlinearConstraint(
-                    fun=lambda params, i=i, j=j: distance_constraint(params, i, j),
-                    lb=0.0,
-                    ub=0.0,
-                )
-                constraints.append(constr)
-
-        def objective_function(params):
-            # Extract and reshape parameters
-            f = params[0]
-            points_3d = params[1:].reshape(-1, 3)
-
-            if points_3d.shape[0] != n_points:
-                raise ValueError(
-                    f"Expected {n_points} points, but got {points_3d.shape[0]}"
-                )
-
-            # Cost for reprojection error
-            if optimize_focal_length:
-                # Recalculate the normalized image points based on the focal length
-                intrinsic_matrix[0, 0] = f
-                intrinsic_matrix[1, 1] = f
-                print(f"Using focal length: {f:.4f}")
-            normalized_points = self._pixel_to_normalized(
-                intrinsic_matrix, image_points
-            )
-            reprojection_cost = _reprojection_cost(normalized_points, points_3d)
-
-            # Cost for distance constraints in 3D
-            # distance_cost = _distance_cost(points_3d)
-
-            return (
-                self.cfg.lambda_proj
-                * reprojection_cost
-                # + self.cfg.lambda_dist * distance_cost
-            )
-
-        # Run optimization
-        result = minimize(
-            objective_function, initial_params, constraints=constraints, method="SLSQP"
-        )
-        focal_length = result.x[0]
-        reconstructed_points = result.x[1:].reshape(-1, 3)
-        normalized_points = self._pixel_to_normalized(intrinsic_matrix, image_points)
-        if self.cfg.debug.log_optimization_results:
-            path = os.path.join(
-                self.out_dir,
-                f"(te)_transform_estimation_results_{self.n_requests:04d}.yaml",
-            )
-            with open(path, "w") as f:
-                yaml.dump(
-                    {
-                        "lambda_proj": float(self.cfg.lambda_proj),
-                        "lambda_dist": float(self.cfg.lambda_dist),
-                        "reprojection_cost": float(
-                            _reprojection_cost(normalized_points, reconstructed_points)
-                        ),
-                        "distance_cost": float(_distance_cost(reconstructed_points)),
-                        "objective_function_value": float(result.fun),
-                        "optimal focal_length": float(result.x[0]),
-                        "message": str(result.message),
-                        "n_function_evaluations": int(result.nfev),
-                        "n_iterations": int(result.nit),
-                        "status": int(result.status),
-                        "success": bool(result.success),
-                    },
-                    f,
-                )
-        if optimize_focal_length:
-            return focal_length, reconstructed_points, result.fun
-        else:
-            return reconstructed_points, result.fun
+        return hand_pose, 0
 
     def get_3D_points(
         self,
@@ -1828,39 +915,6 @@ class TransformEstimator:
 
         return transform
 
-    @staticmethod
-    def project_points_to_pixels(points_3D, intrinsic_matrix):
-        """
-        Projects 3D points to 2D pixel coordinates using the intrinsic matrix.
-
-        Parameters:
-        - points_3D: (N, 3) numpy array of 3D points in camera coordinates
-        - intrinsic_matrix: (3, 3) intrinsic matrix
-
-        Returns:
-        - pixels: (N, 2) pixel coordinates (height, width)
-        """
-        # Split XYZ
-        X = points_3D[:, 0]
-        Y = points_3D[:, 1]
-        Z = points_3D[:, 2]
-
-        # Avoid division by zero
-        Z = np.where(Z == 0, 1e-8, Z)
-
-        # Normalize to get [x, y] in camera image plane
-        x_norm = X / Z
-        y_norm = Y / Z
-
-        # Apply intrinsics
-        fx, fy = intrinsic_matrix[0, 0], intrinsic_matrix[1, 1]
-        cx, cy = intrinsic_matrix[0, 2], intrinsic_matrix[1, 2]
-
-        u = fx * x_norm + cx
-        v = fy * y_norm + cy
-
-        return np.stack((v, u), axis=1)
-
     def _pixel_to_normalized(
         self, intrinsic_matrix: np.ndarray, image_points: np.ndarray
     ):
@@ -1887,22 +941,6 @@ class TransformEstimator:
             normalized_points[i, 0] = (x - cx) / fx
             normalized_points[i, 1] = (y - cy) / fy
         return normalized_points
-
-    def _get_relative_distances(self, points_3D: np.ndarray):
-        """
-        Computes the relative distances between points in 3D space.
-        Args:
-            points_3D (np.ndarray): Nx3 array of 3D points.
-        Returns:
-            dict: Dictionary with keys as tuples of point indices and values as distances.
-        """
-        n_points = len(points_3D)
-        relative_distances = {}
-        for i in range(n_points):
-            for j in range(i + 1, n_points):
-                distance = np.linalg.norm(points_3D[i] - points_3D[j])
-                relative_distances[(i, j)] = distance
-        return relative_distances
 
     def _apply_transformation(
         self, points_3D: np.ndarray, transformation: np.ndarray
@@ -2131,31 +1169,11 @@ class TransformEstimator:
         for i in range(len(points2)):
             ax.text(points2[i, 0], points2[i, 1], f"P{i}", color="red", fontsize=10)
         ax.set_xlabel("X")
-        ax.set_xlabel("Y")
+        ax.set_ylabel("Y")
         # plt.title('2D Points Plot')
         ax.grid(True)
         ax.axis("equal")
         ax.legend()
-
-    def visualize_3d_reconstruction(
-        self,
-        intrinsic_matrix: np.ndarray,
-        points_3D: np.ndarray,
-        points_2D: np.ndarray,
-    ):
-        """
-        Visualizes the reconstruction process by plotting the original 3D points,
-        the reconstructed 3D points, and the 2D image points.
-
-        Args:
-            intrinstic_matrix (np.ndarray): 3x3 intrinsic camera matrix.
-            points_3D (np.ndarray): Nx3 array of original 3D points.
-            reconstructed_points_3D (np.ndarray): Nx3 array of reconstructed 3D points.
-            points_2D (np.ndarray): Nx2 array of 2D image points.
-        """
-
-        _, ax = self._plot_camera_model(intrinsic_matrix, points_2D, points_3D)
-        plt.show()
 
     def save_3d_reconstruction_visualization(
         self,
@@ -2170,7 +1188,7 @@ class TransformEstimator:
         3D points, the reconstructed 3D points, and the 2D image points.
 
         Args:
-            intrinstic_matrix (np.ndarray): 3x3 intrinsic camera matrix.
+            intrinsic_matrix (np.ndarray): 3x3 intrinsic camera matrix.
             points_3D (np.ndarray): Nx3 array of 3D points.
             points_2D (np.ndarray): Nx2 array of 2D image points.
             output_path (str): Path to save the visualization.
@@ -2185,72 +1203,6 @@ class TransformEstimator:
         plt.savefig(f"{base}_top_view{ext}")
         ax.view_init(elev=-90, azim=90, roll=180)
         plt.savefig(f"{base}_camera_view{ext}")
-        plt.close()
-
-    def visualize_transform(
-        self,
-        source_points: np.ndarray,
-        target_points: np.ndarray,
-        transformation_matrix: np.ndarray,
-        source_label: str = None,
-        target_label: str = None,
-    ):
-        """
-        Visualizes the transformed source point alongside the actual target points
-        for comparison.
-
-        Args:
-            source_points (np.ndarray): Nx3 array of 3D points in the source frame.
-            target_points (np.ndarray): Nx3 array of 3D points in the target frame.
-            transformation_matrix (np.ndarray): 4x4 transformation matrix.
-            source_label (str): Label of the source points.
-            target_label (str): Label of the target points.
-        """
-        if not source_label:
-            source_label = "Transformed Source Points"
-        if not target_label:
-            target_label = "Transformed Target Points"
-        transformed_points = self._apply_transformation(
-            source_points, transformation_matrix
-        )
-        ax = self._plot_3D_points(transformed_points, color="red", label=source_label)
-        self._plot_3D_points(target_points, color="blue", label=target_label, ax=ax)
-        plt.title("Transformation Estimation")
-        plt.show()
-
-    def save_transform_visualization(
-        self,
-        source_points: np.ndarray,
-        target_points: np.ndarray,
-        transformation_matrix: np.ndarray,
-        output_path: str,
-        source_label: str = None,
-        target_label: str = None,
-    ):
-        """
-        Saves the visualization of the transformed source point alongside the actual
-        target points for comparison.
-
-        Args:
-            source_points (np.ndarray): Nx3 array of 3D points in the source frame.
-            target_points (np.ndarray): Nx3 array of 3D points in the target frame.
-            transformation_matrix (np.ndarray): 4x4 transformation matrix.
-            output_path (str): Path to save the visualization.
-            source_label (str): Label of the source points.
-            target_label (str): Label of the target points.
-        """
-
-        if not source_label:
-            source_label = "Transformed Source Points"
-        if not target_label:
-            target_label = "Transformed Target Points"
-        transformed_points = self._apply_transformation(
-            source_points, transformation_matrix
-        )
-        ax = self._plot_3D_points(transformed_points, color="red", label=source_label)
-        self._plot_3D_points(target_points, color="blue", label=target_label, ax=ax)
-        plt.title("Transformation Estimation")
-        plt.savefig(output_path)
         plt.close()
 
     def save_2d_visualization(
@@ -2335,20 +1287,6 @@ class TransformEstimator:
             # Place label at the tip of the axis
             tip = mean_point + axis * axis_length
             ax.text(tip[0], tip[1], tip[2], f"A{i+1}", color="orange", fontsize=10)
-
-        # Plot principal axes of the image points
-        # pca_image = PCA()
-        # pca_image.fit(points_image_3D)
-        # mean_image_point = np.mean(points_image_3D, axis=0)
-        # for i, axis in enumerate(pca_image.components_[:2]):
-        #     ax.quiver(
-        #         mean_image_point[0], mean_image_point[1], mean_image_point[2],
-        #         axis[0], axis[1], axis[2],
-        #         color="purple", length=axis_length, normalize=True, label=f"Image Axis {i+1}"
-        #     )
-        #     # Place label at the tip of the axis
-        #     tip = mean_image_point + axis * axis_length
-        #     ax.text(tip[0], tip[1], tip[2], f"IA{i+1}", color="purple", fontsize=10)
 
         # Plot hand pose axes
         origin = hand_pose[:3, 3]

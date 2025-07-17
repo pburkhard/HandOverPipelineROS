@@ -2,17 +2,17 @@ ros:
   node_name: "correspondence_estimator"  # Name of the ROS node
 
 num_correspondences: 10  # number of correspondences to sample
-target_image_size: 224  # Resize the smallest side of the image to this size
+target_image_size: 224  # Resize the smallest side of the image to this size (in pixels)
 extraction_layer: 9  # layer of the model to use for feature extraction
 extraction_facet: "key"  # facet to extract features from
-use_binned_descriptor: True  # wether to use log-binning descriptor
+use_binned_descriptor: True  # whether to use log-binning descriptor
 saliency_threshold: 0.05  # threshold of saliency maps to distinguish fg and bg
 model_type: "dino_vits8"  # model type to use for feature extraction
 model_stride: 4  # stride of the model
 preprocess_images: True  # whether to preprocess images before feature extraction
 
 # Set this value according to you available GPU memory.
-max_image_size: 10000000 # The input image will be scaled if necessary to not exceed this number of pixels
+max_image_size: 10000000 # Maximum allowed image size in pixels. Input images exceeding this will be scaled down
 max_aspect_ratio: 2.0  # The input image will be scaled if necessary to not exceed this aspect ratio
 
 debug:
@@ -21,7 +21,7 @@ debug:
   out_dir_mode: "topic"  # Options: "fixed", "topic"
   out_dir_topic: "/out_dir"  # Topic to set the output directory dynamically (if out_dir_mode is "topic")
   out_dir_fixed: "/Handover_Pipeline/outputs/" # Fixed output directory path (if out_dir_mode is "fixed")
-  log_config: true # log the configuration used for the pipeline
+  log_config: True # log the configuration used for the pipeline
   log_unprocessed_images: True  # log the unprocessed images
   log_correspondences: True  # log the correspondence points found
   log_visualization: True  # log visualization of the correspondence estimation

@@ -13,6 +13,8 @@ from correspondence_estimator.msg import (
 
 
 class CorrespondenceEstimationClient:
+    """Client for the correspondence estimation action server."""
+
     def __init__(self, cfg: DictConfig):
         self.cfg = cfg
 

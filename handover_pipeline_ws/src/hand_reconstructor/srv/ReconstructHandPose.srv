@@ -1,8 +1,8 @@
 # Request
-sensor_msgs/Image image
-std_msgs/Float32 focal_length  # The estimated focal length of the (virtual) grasp camera
+sensor_msgs/Image image  # Image containing the hand
+std_msgs/Float32 focal_length  # The focal length of the camera that has taken this image
 ---
 # Response
-geometry_msgs/Transform transform_hand_to_camera
+geometry_msgs/Transform transform_hand_to_camera  # Hand pose in the camera frame
 std_msgs/Int32MultiArray keypoints_2d # Keypoints in the hand image, shape (21,2)
 bool success

@@ -23,7 +23,7 @@ from correspondence_estimator.msg import (
     EstimateCorrespondenceGoal,
 )
 
-# TODO: Remove dependency on the pipeline package
+# Import custom message utilities from the pipeline package
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../pipeline/src/"))
 from msg_utils import imgmsg_to_cv2
 
@@ -36,6 +36,7 @@ from correspondences import find_correspondences, draw_correspondences
 
 
 class CorrespondenceEstimator:
+    """Action server for estimating correspondences between two images."""
 
     def __init__(self, cfg: DictConfig):
         self.cfg = cfg
@@ -339,7 +340,7 @@ class CorrespondenceEstimator:
             resized_ros_img.encoding = "rgb8"
             resized_ros_img.step = new_width * 3
             resized_ros_img.data = resized_pil_img.tobytes()
-            return resized_ros_img
+            return resized_ros_img, scale
         return image, scale
 
     def _limit_aspect_ratio(self, image: Image) -> Tuple[Image, List[int]]:

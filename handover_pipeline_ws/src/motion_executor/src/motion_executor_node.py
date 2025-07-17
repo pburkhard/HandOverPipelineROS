@@ -6,13 +6,21 @@ import numpy as np
 import os
 import rospy
 import sys
-from tf.transformations import quaternion_from_euler, euler_from_quaternion, quaternion_slerp
+from tf.transformations import (
+    quaternion_from_euler,
+    euler_from_quaternion,
+    quaternion_slerp,
+)
 from tf import TransformListener
 from typing import List
 import yaml
 
 
-from controller_manager_msgs.srv import SwitchController, UnloadController, LoadController
+from controller_manager_msgs.srv import (
+    SwitchController,
+    UnloadController,
+    LoadController,
+)
 from franka_gripper.msg import MoveAction, MoveGoal
 from geometry_msgs.msg import PoseStamped, Pose
 from moveit_msgs.msg import PositionIKRequest
@@ -23,31 +31,40 @@ from std_msgs.msg import Empty, String
 # Absolute path to the root directory of the package
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+
 class MotionExecutor:
+    """Node to move the robot gripper to a target pose."""
 
     def __init__(self, cfg: dict):
         self.cfg = cfg
         self.is_executing = False  # Whether the robot is currently executing a motion
 
-        moveit_commander.roscpp_initialize(sys.argv)  # Initialize MoveIt! commander
-        rospy.init_node(self.cfg['ros']['node_name'], anonymous=True)
+        # Initialize MoveIt! commander before ROS node initialization
+        moveit_commander.roscpp_initialize(sys.argv)
+        rospy.init_node(self.cfg["ros"]["node_name"], anonymous=True)
 
-        self.target_pose_history = []  # History of target poses received from the subscribed topic
+        self.target_pose_history = (
+            []
+        )  # History of target poses received from the subscribed topic
         self.measured_pose = None  # Measured pose from the subscribed topic
 
         # MoveIt! interface
         self.robot = moveit_commander.RobotCommander()
         self.scene = moveit_commander.PlanningSceneInterface()
-        self.group = moveit_commander.MoveGroupCommander("panda_manipulator", wait_for_servers=15)
-        self.gripper = moveit_commander.MoveGroupCommander("panda_hand", wait_for_servers=15)
+        self.group = moveit_commander.MoveGroupCommander(
+            "panda_manipulator", wait_for_servers=15
+        )
+        self.gripper = moveit_commander.MoveGroupCommander(
+            "panda_hand", wait_for_servers=15
+        )
 
         # Set the output directory
         self.out_dir = None
-        if self.cfg['debug']['out_dir_mode'] == "fixed":
-            self.out_dir = self.cfg['debug']['out_dir_fixed']
-        elif self.cfg['debug']['out_dir_mode'] == "topic":
+        if self.cfg["debug"]["out_dir_mode"] == "fixed":
+            self.out_dir = self.cfg["debug"]["out_dir_fixed"]
+        elif self.cfg["debug"]["out_dir_mode"] == "topic":
             self._out_dir_sub = rospy.Subscriber(
-                self.cfg['debug']['out_dir_topic'],
+                self.cfg["debug"]["out_dir_topic"],
                 String,
                 self._out_dir_callback,
                 queue_size=1,
@@ -64,62 +81,67 @@ class MotionExecutor:
             )
 
         # Log the config
-        if self.cfg['debug']['log_config']:
+        if self.cfg["debug"]["log_config"]:
             config_path = os.path.join(self.out_dir, "(me)_config.yaml")
             with open(config_path, "w") as f:
                 yaml.dump(self.cfg, f)
 
         self.load_scene()
-        self.group.set_planning_time(self.cfg['planning_timeout'])
+        self.group.set_planning_time(self.cfg["planning_timeout"])
         self.group.set_max_velocity_scaling_factor(0.15)
         self.group.set_max_acceleration_scaling_factor(0.15)
-        # self.group.set_planner_id("TRRT")  # RRT
         self.group.set_planning_pipeline_id("ompl")
         self.group.set_goal_position_tolerance(0.01)
 
         self.tf_listener = TransformListener(100)
         self.marker_publisher = rospy.Publisher(
-            self.cfg['ros']['published_topics']['marker'],
+            self.cfg["ros"]["published_topics"]["marker"],
             Marker,
             queue_size=1,
         )
-        self.pose_pubisher = rospy.Publisher(
-            self.cfg['ros']['published_topics']['target_pose'],
+        self.pose_publisher = rospy.Publisher(
+            self.cfg["ros"]["published_topics"]["target_pose"],
             PoseStamped,
             queue_size=1,
         )  # Used in phase 2
         self.target_subscriber = rospy.Subscriber(
-            self.cfg['ros']['subscribed_topics']['target_pose'],
+            self.cfg["ros"]["subscribed_topics"]["target_pose"],
             PoseStamped,
             self.target_callback,
             queue_size=1,
         )  # Used in phase 2
         self.pose_subscriber = rospy.Subscriber(
-            self.cfg['ros']['subscribed_topics']['measured_pose'],
+            self.cfg["ros"]["subscribed_topics"]["measured_pose"],
             PoseStamped,
             self.measured_pose_callback,
             queue_size=1,
         )  # Used in phase 2
         self.trigger_subscriber = rospy.Subscriber(
-            self.cfg['ros']['subscribed_topics']['trigger'],
+            self.cfg["ros"]["subscribed_topics"]["trigger"],
             Empty,
             self.trigger_callback,
             queue_size=1,
         )  # Used to trigger the whole execution
-        self.gripper_client = SimpleActionClient(self.cfg['ros']['actions']['gripper_control'], MoveAction) # Used to open the gripper after phase 2
+        self.gripper_client = SimpleActionClient(
+            self.cfg["ros"]["actions"]["gripper_control"], MoveAction
+        )  # Used to open the gripper after phase 2
         self.controller_switch_client = rospy.ServiceProxy(
-            self.cfg['ros']['services']['switch_controller'], SwitchController
+            self.cfg["ros"]["services"]["switch_controller"], SwitchController
         )  # Used to switch the controllers between phases
         self.controller_unload_client = rospy.ServiceProxy(
-            self.cfg['ros']['services']['unload_controller'], UnloadController
+            self.cfg["ros"]["services"]["unload_controller"], UnloadController
         )  # Used to switch the controllers between phases
         self.controller_load_client = rospy.ServiceProxy(
-            self.cfg['ros']['services']['load_controller'], LoadController
+            self.cfg["ros"]["services"]["load_controller"], LoadController
         )  # Used to switch the controllers between phases
 
         self.compute_ik = rospy.ServiceProxy("/compute_ik", GetPositionIK)
-        self.upper_limit = np.array([2.8973, 1.7628, 2.8973, -0.0698, 2.8973, 3.7525, 2.8973])
-        self.lower_limit = np.array([-2.8973, -1.7628, -2.8973, -3.0718, -2.8973, -0.0175, -2.8973])
+        self.upper_limit = np.array(
+            [2.8973, 1.7628, 2.8973, -0.0698, 2.8973, 3.7525, 2.8973]
+        )
+        self.lower_limit = np.array(
+            [-2.8973, -1.7628, -2.8973, -3.0718, -2.8973, -0.0175, -2.8973]
+        )
 
         rospy.loginfo(f"{self.cfg['ros']['node_name']} node started.")
 
@@ -137,9 +159,8 @@ class MotionExecutor:
         ik_result = self.computeIK(target_pose)
         rospy.loginfo("Is solvable: %s" % ik_result)
 
-        self._mark_grasp(target_pose, 0, self.cfg['ros']['frames']['camera'])
+        self._mark_grasp(target_pose, 0, self.cfg["ros"]["frames"]["camera"])
 
-        # intermediate_pose = target_pose  TODO: Remove this
         intermediate_pose = self.group.get_current_pose()
         intermediate_pose.pose.position.z += 0.2  # Move up to avoid collisions
         self.group.set_pose_target(intermediate_pose)
@@ -151,7 +172,7 @@ class MotionExecutor:
         if not success:
             rospy.logerr("Failed to move to target pose.")
             return
-        
+
         self.group.stop()
         self.group.clear_pose_targets()
         rospy.loginfo("Phase 1 completed.")
@@ -162,46 +183,50 @@ class MotionExecutor:
         while not rospy.is_shutdown() and self.measured_pose is None:
             rospy.logwarn("No measured pose available. Trying again in 1 second.")
             rospy.sleep(1.0)
-        
+
         rospy.loginfo(f"Starting to move.")
-        delta_pose = self.cfg['phase_2_max_vel'] / self.cfg['phase_2_rate']
-        delta_angle = self.cfg['phase_2_max_rot_vel'] / self.cfg['phase_2_rate']
+        delta_pose = self.cfg["phase_2_max_vel"] / self.cfg["phase_2_rate"]
+        delta_angle = self.cfg["phase_2_max_rot_vel"] / self.cfg["phase_2_rate"]
 
         # 1. Move the gripper to the target pose using impedance control
         while not rospy.is_shutdown() and not self.all_close(
-            target_pose.pose, self.measured_pose.pose, self.cfg['target_tolerance']
-        ):  
-            if not self.cfg['fix_target_pose']:
+            target_pose.pose, self.measured_pose.pose, self.cfg["target_tolerance"]
+        ):
+            if not self.cfg["fix_target_pose"]:
                 target_pose = self.average_poses(self.target_pose_history)
-            rospy.loginfo(f"Distance to target pose: {self.distance(target_pose, self.measured_pose)}")
+            rospy.loginfo(
+                f"Distance to target pose: {self.distance(target_pose, self.measured_pose)}"
+            )
 
             target_equilibrium_pose = self.limit_pose(
                 start_pose=self.measured_pose,
                 end_pose=target_pose,
                 max_distance_to_start_pose=delta_pose,
-                max_angle_to_start_pose=delta_angle
+                max_angle_to_start_pose=delta_angle,
             )
 
-            rospy.loginfo(f"Moving distance of {self.distance(target_equilibrium_pose, self.measured_pose)} to target pose.")
+            rospy.loginfo(
+                f"Moving distance of {self.distance(target_equilibrium_pose, self.measured_pose)} to target pose."
+            )
 
-            self._mark_grasp(target_equilibrium_pose, 0, self.cfg['ros']['frames']['camera'])
+            self._mark_grasp(
+                target_equilibrium_pose, 0, self.cfg["ros"]["frames"]["camera"]
+            )
 
             # Update the target pose
-            self.pose_pubisher.publish(target_equilibrium_pose)
+            self.pose_publisher.publish(target_equilibrium_pose)
             rospy.sleep(0.02)
 
         # 2. Open the gripper
         rospy.loginfo("Phase 2 completed.")
 
     def open_gripper(self):
-        """Open the gripper using the gripper action client.
-        """
+        """Open the gripper using the gripper action client."""
         rospy.loginfo("Opening the gripper.")
         goal = MoveGoal(width=0.05 * 2, speed=1.0)
         self.gripper_client.send_goal(goal)
         self.gripper_client.wait_for_result(timeout=rospy.Duration(2.0))
         rospy.loginfo("Gripper opened phase 2 terminated.")
-
 
     def switch_controllers(self, start_controller: str, stop_controller: str):
         """Switch the controllers using the controller manager service.
@@ -209,8 +234,6 @@ class MotionExecutor:
             start_controller (str): The type of the controller to start.
             stop_controller (str): The type of the controller to stop.
         """
-        # At the moment, we only support switching from the joint trajectory controller to the impedance controller
-        # assert start_controller == "cartesian_impedance_example_controller" and stop_controller == "position_joint_trajectory_controller"
 
         rospy.loginfo(f"Switching controllers: {start_controller} -> {stop_controller}")
         try:
@@ -238,13 +261,15 @@ class MotionExecutor:
         except rospy.ServiceException as e:
             rospy.logerr(f"Failed to switch controllers: {e}")
 
-
     def load_scene(self):
-        """Load the scene in the MoveIt! planning scene.
-        """
-        wall_pose = self.get_stamped_pose([1.7, 0.0, +0.005], [0, 0, 0, 1], "panda_link0")  # was - 0.035 ( cube is 4.2 cm) tried with 0.015 and was working for pan
+        """Load the scene in the MoveIt! planning scene."""
+        wall_pose = self.get_stamped_pose(
+            [1.7, 0.0, +0.005], [0, 0, 0, 1], "panda_link0"
+        )  # was - 0.035 ( cube is 4.2 cm) tried with 0.015 and was working for pan
         self.scene.add_box("floor", wall_pose, size=(3, 3, 0))
-        pole_pose = self.get_stamped_pose([0.09, -0.4, 0.2], [0, 0, 0, 1], "panda_link0")
+        pole_pose = self.get_stamped_pose(
+            [0.09, -0.4, 0.2], [0, 0, 0, 1], "panda_link0"
+        )
         self.scene.add_box("pole", pole_pose, size=(0.08, 0.11, 0.46))
 
     ######################
@@ -252,35 +277,35 @@ class MotionExecutor:
     ######################
 
     def measured_pose_callback(self, measured_pose: PoseStamped):
-        """ Callback function for the measured pose subscriber.
-        """
+        """Callback function for the measured pose subscriber."""
         self.measured_pose = measured_pose
 
     def target_callback(self, target_pose: PoseStamped):
-        """ Callback function for the target pose subscriber.
-        """
+        """Callback function for the target pose subscriber."""
 
         # Update the target pose history if not in fix_target_pose mode and already moving
-        if not self.cfg['fix_target_pose'] or not self.is_executing:
+        if not self.cfg["fix_target_pose"] or not self.is_executing:
             self.target_pose_history.append(target_pose)
-            if len(self.target_pose_history) > self.cfg['average_over_n_poses']:
+            if len(self.target_pose_history) > self.cfg["average_over_n_poses"]:
                 self.target_pose_history.pop(0)
             rospy.loginfo("Target pose received and added to history.")
 
     def trigger_callback(self, msg: Empty):
-        """ Callback function for the trigger subscriber.
-        """
+        """Callback function for the trigger subscriber."""
         if self.is_executing:
             rospy.logwarn("Already executing. Ignoring trigger.")
             return
 
-        while not rospy.is_shutdown() and len(self.target_pose_history) < self.cfg['average_over_n_poses']:
+        while (
+            not rospy.is_shutdown()
+            and len(self.target_pose_history) < self.cfg["average_over_n_poses"]
+        ):
             rospy.logwarn(
                 f"Expected {self.cfg['average_over_n_poses']} poses, "
                 f"but got {len(self.target_pose_history)}. Trying again in 1 second."
             )
             rospy.sleep(1.0)
-        
+
         self.is_executing = True
         target_pose = self.average_poses(self.target_pose_history)
 
@@ -288,7 +313,7 @@ class MotionExecutor:
         target_pose_phase1 = self.limit_pose(
             start_pose=target_pose,
             end_pose=self.group.get_current_pose(),
-            max_distance_to_start_pose=self.cfg['phase_1_target_distance']
+            max_distance_to_start_pose=self.cfg["phase_1_target_distance"],
         )
         self.phase1(target_pose_phase1)
 
@@ -322,7 +347,6 @@ class MotionExecutor:
         if self.out_dir != msg.data:
             self.out_dir = msg.data
             rospy.loginfo(f"Output directory set to: {self.out_dir}")
-
 
     #####################
     # Utility Functions #
@@ -368,8 +392,14 @@ class MotionExecutor:
             return d <= tolerance and cos_phi_half >= cos(tolerance / 2.0)
 
         return True
-    
-    def computeIK(self, pose_stamped, ik_link_name="panda_hand_tcp", move_group="panda_manipulator", is_grasps=True) -> bool:
+
+    def computeIK(
+        self,
+        pose_stamped,
+        ik_link_name="panda_hand_tcp",
+        move_group="panda_manipulator",
+        is_grasps=True,
+    ) -> bool:
         """Check if a given pose is reachable for the robot. Return True if it is, False otherwise."""
 
         # Create a pose to compute IK for
@@ -397,38 +427,50 @@ class MotionExecutor:
             return min(upper_diff, lower_diff) > 0.1
         else:
             return False
-    
+
     def distance(self, pose1: PoseStamped, pose2: PoseStamped):
         """
         Calculate the Euclidean distance between two PoseStamped objects.
         """
         assert pose1.header.frame_id == pose2.header.frame_id
-        
+
         dx = pose1.pose.position.x - pose2.pose.position.x
         dy = pose1.pose.position.y - pose2.pose.position.y
         dz = pose1.pose.position.z - pose2.pose.position.z
         return np.sqrt(dx**2 + dy**2 + dz**2)
-    
+
     def angle(self, pose1: PoseStamped, pose2: PoseStamped):
         """
         Calculate the angle between the orientations of two PoseStamped objects.
         The angle is calculated as the angle between the quaternions.
         """
         assert pose1.header.frame_id == pose2.header.frame_id
-        
-        quat1 = (pose1.pose.orientation.x, pose1.pose.orientation.y, pose1.pose.orientation.z, pose1.pose.orientation.w)
-        quat2 = (pose2.pose.orientation.x, pose2.pose.orientation.y, pose2.pose.orientation.z, pose2.pose.orientation.w)
-        
+
+        quat1 = (
+            pose1.pose.orientation.x,
+            pose1.pose.orientation.y,
+            pose1.pose.orientation.z,
+            pose1.pose.orientation.w,
+        )
+        quat2 = (
+            pose2.pose.orientation.x,
+            pose2.pose.orientation.y,
+            pose2.pose.orientation.z,
+            pose2.pose.orientation.w,
+        )
+
         dot_product = np.dot(quat1, quat2)
         return 2 * np.arccos(np.clip(dot_product, -1.0, 1.0))
-    
+
     def average_poses(self, poses: List[PoseStamped]):
         """
+        Computes the average pose from a list of PoseStamped objects by averaging positions and orientations (in Euler space).
+        Returns a new PoseStamped with the averaged position and orientation, or None if input is invalid.
         """
         if not poses:
             rospy.logerr("No poses to average.")
             return None
-        
+
         frame_id = poses[0].header.frame_id
         if not all(p.header.frame_id == frame_id for p in poses):
             rospy.logerr("All poses must have the same frame_id to be averaged.")
@@ -446,18 +488,20 @@ class MotionExecutor:
             euler = euler_from_quaternion([quat.x, quat.y, quat.z, quat.w])
             euler_angles.append(euler)
         euler_angles_avg = np.array(euler_angles).mean(axis=0)
-        quat_avg = quaternion_from_euler(euler_angles_avg[0], euler_angles_avg[1], euler_angles_avg[2])
+        quat_avg = quaternion_from_euler(
+            euler_angles_avg[0], euler_angles_avg[1], euler_angles_avg[2]
+        )
 
         avg_pose.pose.orientation.x = quat_avg[0]
         avg_pose.pose.orientation.y = quat_avg[1]
         avg_pose.pose.orientation.z = quat_avg[2]
         avg_pose.pose.orientation.w = quat_avg[3]
-        
+
         avg_pose.header.frame_id = frame_id
         avg_pose.header.stamp = rospy.Time.now()
 
         return avg_pose
-    
+
     def get_stamped_pose(self, position, orientation, frame):
         stamped_pose = PoseStamped()
         stamped_pose.header.frame_id = frame
@@ -470,7 +514,6 @@ class MotionExecutor:
         stamped_pose.pose.orientation.z = orientation[2]
         stamped_pose.pose.orientation.w = orientation[3]
         return stamped_pose
-
 
     def _mark_grasp(self, pose: PoseStamped, id: int, camera_frame: str) -> None:
         """Mark the target gripper pose in the camera frame using a panda gripper mesh.
@@ -499,7 +542,13 @@ class MotionExecutor:
         marker.color.g = 0.0
         self.marker_publisher.publish(marker)
 
-    def limit_pose(self, start_pose: PoseStamped, end_pose: PoseStamped, max_distance_to_start_pose: float = None, max_angle_to_start_pose: float = None) -> PoseStamped:
+    def limit_pose(
+        self,
+        start_pose: PoseStamped,
+        end_pose: PoseStamped,
+        max_distance_to_start_pose: float = None,
+        max_angle_to_start_pose: float = None,
+    ) -> PoseStamped:
         """Returns a pose that is as close as possible to the end pose, but within a maximum distance
         and rotation angle from the start pose.
         Args:
@@ -526,12 +575,14 @@ class MotionExecutor:
             t_r = 1.0
 
         # Ensure t is between 0 and 1
-        t = min(t_d, t_r, 1.0)  
+        t = min(t_d, t_r, 1.0)
 
         if t == 1.0:
             return end_pose
-        
-        rospy.loginfo(f"Setting interpolated pose with t = {t:.2f} (distance limit: {t_d:.2f}, rotation limit: {t_r:.2f})")
+
+        rospy.loginfo(
+            f"Setting interpolated pose with t = {t:.2f} (distance limit: {t_d:.2f}, rotation limit: {t_r:.2f})"
+        )
 
         interpol_pose = PoseStamped()
         interpol_pose.header.frame_id = start_pose.header.frame_id
@@ -549,17 +600,19 @@ class MotionExecutor:
         interpol_pose.pose.position.z = start_z + t * (end_z - start_z)
 
         # Interpolate orientation using quaternion slerp
-        start_quat = [start_pose.pose.orientation.x,
-                      start_pose.pose.orientation.y,
-                      start_pose.pose.orientation.z,
-                      start_pose.pose.orientation.w]
-        end_quat = [end_pose.pose.orientation.x,
-                    end_pose.pose.orientation.y,
-                    end_pose.pose.orientation.z,
-                    end_pose.pose.orientation.w]
-        interpol_quat = quaternion_slerp(
-            start_quat, end_quat, t
-        )
+        start_quat = [
+            start_pose.pose.orientation.x,
+            start_pose.pose.orientation.y,
+            start_pose.pose.orientation.z,
+            start_pose.pose.orientation.w,
+        ]
+        end_quat = [
+            end_pose.pose.orientation.x,
+            end_pose.pose.orientation.y,
+            end_pose.pose.orientation.z,
+            end_pose.pose.orientation.w,
+        ]
+        interpol_quat = quaternion_slerp(start_quat, end_quat, t)
         interpol_pose.pose.orientation.x = interpol_quat[0]
         interpol_pose.pose.orientation.y = interpol_quat[1]
         interpol_pose.pose.orientation.z = interpol_quat[2]
@@ -567,8 +620,9 @@ class MotionExecutor:
 
         return interpol_pose
 
+
 if __name__ == "__main__":
-    with open(os.path.join(ROOT_DIR, "config", "default.yaml"), 'r') as f:
+    with open(os.path.join(ROOT_DIR, "config", "default.yaml"), "r") as f:
         cfg = yaml.safe_load(f)
         try:
             MotionExecutor(cfg)

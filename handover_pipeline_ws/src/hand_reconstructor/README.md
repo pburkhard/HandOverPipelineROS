@@ -1,5 +1,10 @@
 # Hand Reconstructor ROS Package
 
+## Overview
+
+The grasp generator package is part of the handover pipeline. It uses the vision-transformer-based model "hamer" to estimate the 3D hand pose (and other parameters) from a monocular image. More information on hamer can be found at https://geopavlakos.github.io/hamer/. To get further information on how this node is used in the context of the whole pipeline, please consult the README at the root of this repository.
+
+
 ## Setup
 
 1. Prepare the model data:
@@ -37,18 +42,24 @@
 
 2. Run `setup.bash`, which will create the necessary conda environment.
 
-3. (Optional) check the `config/default.yaml` file and adapt ROS topic names if necessary.
+3. (Optional) Check the ROS topic names in `config/default.yaml` and change if needed.
 
-## Running the node
+## Launching the Node
+Launch the node with:
 
-Use the following command:
-
-```roslaunch hand_reconstructor hand_reconstructor.launch```
+```bash
+roslaunch hand_reconstructor hand_reconstructor.launch
+```
 
 This will launch the node in the correct conda environment.
 
 
-## Issues
+## Using the Node
+
+The node provides multiple service proxies accepting requests of type `EstimateCameraRequest`, `ReconstructHandRequeset`, `ReconstructHandPoseRequest` and `RenderHandRequest`. For more details, see the corresponding `.srv` files located in the `srv` folder of this package.
+
+
+## Known Issues
 
 ### Numpy data type
 The installation of hamer as described in their README leads to a faulty environment. When trying to run the code, the following error shows up:
@@ -78,7 +89,7 @@ EGL_DEVICE_ID=0
 CUDA_VISIBLE_DEVICES=0
 ```
 
-If this doesn't work, install a software-based interface:
+If this doesn't work, install a software-based interface (slower):
 
 ```bash
 apt-get update && apt-get install -y libosmesa6-dev

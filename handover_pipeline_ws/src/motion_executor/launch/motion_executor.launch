@@ -2,9 +2,9 @@
     <arg name="pkg_path" value="$(find motion_executor)"/>
     <arg name="python_path" value="$(arg pkg_path)/src/motion_executor_node.py"/>
     <arg name="conda_env" value="motion_executor"/>
-    <!-- Launch the node with updated conda environment activation -->
+
+    <!-- Launch the node in the correct conda environment -->
     <node name="motion_executor" pkg="motion_executor" type="activate_conda_env.sh" 
                 args="$(arg conda_env) $(arg python_path)" output="screen" respawn="false">
-        <param name="example_param" value="example_value"/>
     </node>
 </launch>

@@ -22,7 +22,7 @@ from hamer.datasets.vitdet_dataset import ViTDetDataset
 from hamer.utils.utils_detectron2 import DefaultPredictor_Lazy
 import hamer
 
-# TODO: Remove dependency on the pipeline package
+# Import custom message utilities from the pipeline package
 sys.path.append(str(Path(__file__).parent.parent.parent / "pipeline/src/"))
 from msg_utils import (
     np_to_transformmsg,
@@ -50,6 +50,8 @@ from sensor_msgs.msg import CameraInfo, Image
 
 
 class HandReconstructor:
+    """Node with multiple services to reconstruct a hand from an image, estimate the camera parameters, and render the hand on an image."""
+
     def __init__(self, cfg: DictConfig):
         self.cfg = cfg
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -88,7 +90,6 @@ class HandReconstructor:
 
         # Initialize the body detector (Needed to crop the hand region)
         if cfg.body_detector == "vitdet":
-
             cfg_path = (
                 Path(hamer.__file__).parent
                 / "configs"
@@ -177,9 +178,7 @@ class HandReconstructor:
         )
         # Start the publisher
         self._mesh_image_pub = rospy.Publisher(
-            self.cfg.ros.published_topics.mesh_image,
-            Image,
-            queue_size=1
+            self.cfg.ros.published_topics.mesh_image, Image, queue_size=1
         )
         self.n_requests = 0  # Keep track of the number of requests
 
@@ -804,7 +803,7 @@ class HandReconstructor:
             image (np.ndarray): Image in BGR format to visualize the hand poses on.
 
         Returns:
-            np.ndarry: the original image with all predicted hands rendered
+            np.ndarray: the original image with all predicted hands rendered
                 in it.
         """
 
@@ -923,20 +922,6 @@ class HandReconstructor:
                     )
         return image
 
-    def visualize_mesh(self, estimation: dict, img_path: str):
-        """Renders the estimated hand into the original image
-
-        Args:
-            estimation (dict): Dictionary containing hand pose estimation
-                outputs according to the function "estimate_hand_poses
-            img_path (str): path to the original image
-        """
-
-        img = self._get_mesh_visualization(self, estimation, img_path)
-        cv2.imshow("Hand poses", img)
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
-
     def save_mesh_visualization(
         self, estimation: dict, image: np.ndarray, output_path: str
     ):
@@ -992,6 +977,6 @@ if __name__ == "__main__":
         HandReconstructor(cfg)
         rospy.spin()
     except rospy.ROSInterruptException:
-        rospy.loginfo("GraspGenerator node interrupted.")
+        rospy.loginfo("HandReconstructor node interrupted.")
     except Exception as e:
         rospy.logerr(f"Error: {e}")

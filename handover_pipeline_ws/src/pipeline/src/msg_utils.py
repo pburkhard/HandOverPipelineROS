@@ -1,3 +1,5 @@
+# This file contains custom message utility functions for converting from and to ROS messages.
+
 import numpy as np
 import tf.transformations
 

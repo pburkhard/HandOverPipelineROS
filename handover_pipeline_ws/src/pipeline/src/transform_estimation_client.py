@@ -16,6 +16,8 @@ from transform_estimator.msg import (
 
 
 class TransformEstimationClient:
+    """Client for the transform estimation action server."""
+
     def __init__(self, cfg: DictConfig):
         self.cfg = cfg
 
@@ -23,13 +25,20 @@ class TransformEstimationClient:
             self.cfg.actions.estimate_transform, EstimateTransformAction
         )
         self._action_client_heuristic = actionlib.SimpleActionClient(
-            self.cfg.actions.estimate_transform_heuristic, EstimateTransformHeuristicAction
+            self.cfg.actions.estimate_transform_heuristic,
+            EstimateTransformHeuristicAction,
         )
-        rospy.loginfo(f"Waiting for action server {self.cfg.actions.estimate_transform}...")
+        rospy.loginfo(
+            f"Waiting for action server {self.cfg.actions.estimate_transform}..."
+        )
         self._action_client.wait_for_server()
-        rospy.loginfo(f"Waiting for action server {self.cfg.actions.estimate_transform_heuristic}...")
+        rospy.loginfo(
+            f"Waiting for action server {self.cfg.actions.estimate_transform_heuristic}..."
+        )
         self._action_client_heuristic.wait_for_server()
-        rospy.loginfo(f"Action servers {self.cfg.actions.estimate_transform} and {self.cfg.actions.estimate_transform_heuristic} are up.")
+        rospy.loginfo(
+            f"Action servers {self.cfg.actions.estimate_transform} and {self.cfg.actions.estimate_transform_heuristic} are up."
+        )
 
     def estimate_transform(
         self,
@@ -80,8 +89,12 @@ class TransformEstimationClient:
             return None
 
         rospy.loginfo("Successfully estimated transform.")
-        return result.transform_robot_cam_to_gen_cam, result.grasp_camera_info, result.mse.data
-    
+        return (
+            result.transform_robot_cam_to_gen_cam,
+            result.grasp_camera_info,
+            result.mse.data,
+        )
+
     def estimate_transform_heuristic(
         self,
         object_camera_info: CameraInfo,
@@ -123,7 +136,9 @@ class TransformEstimationClient:
         )
 
         # Wait for the action to complete
-        self._action_client_heuristic.wait_for_result(rospy.Duration(self.cfg.ros.timeout))
+        self._action_client_heuristic.wait_for_result(
+            rospy.Duration(self.cfg.ros.timeout)
+        )
         result = self._action_client_heuristic.get_result()
 
         if result is None:

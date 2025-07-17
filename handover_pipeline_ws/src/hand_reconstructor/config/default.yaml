@@ -1,21 +1,20 @@
-# This path must be absolute (and valid inside the container).
-hamer_data_dir: "/Handover_Pipeline/data/hamer/"
-body_detector: "regnety" # 'regnety' or "vitdet"
+hamer_data_dir: "/Handover_Pipeline/data/hamer/" # Path to the hamer model data. This path must be absolute!
+body_detector: "regnety" # "regnety" (faster, less memory intensive) or "vitdet" (more accurate)
 rescale_factor: 2.0  # Padding around the detected boundary box for the hand
-body_detector_confidence_threshold: 0.5 
-hand_detector_confidence_threshold: 0.5
-focal_length: 909
-img_size: 1280 # The maximum of the width and height of the input image.
+body_detector_confidence_threshold: 0.5  # Detections with a confidence below this threshold will be ignored
+hand_detector_confidence_threshold: 0.5  # Detections with a confidence below this threshold will be ignored
+focal_length: 909 # Focal length of the camera that has taken the image.
+img_size: 1280 # The largest image dimension (width or height) of the input image. Will only be used for rendering the hand mesh in the correct size.
 
 ros:
   node_name: "hand_reconstructor"  # Name of the ROS node
   provided_services:
-    reconstruct_hand: "reconstruct_hand"  # Service to reconstruct the hand from a given image
-    reconstruct_hand_pose: "reconstruct_hand_pose"  # Service to reconstruct the hand pose from a given image
+    reconstruct_hand: "reconstruct_hand"  # Service to reconstruct the hand from a given image (returns all estimations in a dictionary)
+    reconstruct_hand_pose: "reconstruct_hand_pose"  # Service to reconstruct the hand pose from a given image (only returns the hand pose and a few additional parameters)
     estimate_camera: "estimate_camera"  # Service to estimate the camera parameters
     render_hand: "render_hand"  # Service to render the reconstructed hand
   published_topics:
-    mesh_image: "/reconstructed_hand_mesh" # Publish an image with the reconstructed hand mesh
+    mesh_image: "/reconstructed_hand_mesh" # Images containing the reconstructed hand mesh are published on this topic (if enabled in the debug section)
 
 debug:
   # All output data will be saved to the output directory.
@@ -23,11 +22,11 @@ debug:
   out_dir_mode: "topic"  # Options: "fixed", "topic"
   out_dir_topic: "/out_dir"  # Topic to set the output directory dynamically (if out_dir_mode is "topic")
   out_dir_fixed: "/Handover_Pipeline/outputs/" # Fixed output directory path (if out_dir_mode is "fixed")
-  log_config: true  # Log the configuration used for the pipeline
-  log_detections: false  # Log the detected hand and body probabilities (Attention: If true, data will be logged in every iteration of the main loop!)
+  log_config: True  # Log the configuration used for the hand reconstructor
+  log_detections: False  # Log the detected hand and body probabilities (Attention: If true, data will be logged in every iteration of the main loop!)
   log_visualization:
-    reconstruct_hand_pose: false  # Log a visualization of the reconstructed hand pose for the reconstruction service (Attention: If true, data will be logged in every iteration of the main loop!)
-    reconstruct_hand: false  # Log a visualization of the reconstructed hand for the reconstruction service (This service will only be called up to once in the initialization step)
-    estimate_camera: false  # Log a visualization of the estimated camera parameters for the camera estimation service (Attention: If true, data will be logged in every iteration of the main loop!)
+    reconstruct_hand_pose: False  # Log a visualization of the reconstructed hand pose whenever the hand pose reconstruction service is called (Attention: If true, data will be logged in every iteration of the main loop!)
+    reconstruct_hand: False  # Log a visualization of the reconstructed hand pose whenever the hand reconstruction service is called (This service will only be called up to once in the initialization step)
+    estimate_camera: False  # Log a visualization of the reconstructed hand pose whenever the camera estimation service is called (Attention: If true, data will be logged in every iteration of the main loop!)
   publish_visualization:
-    reconstruct_hand_pose: true
+    reconstruct_hand_pose: True  # Publish a visualization of the reconstructed hand pose whenever the hand pose reconstruction service is called (Attention: If true, data will be published in every iteration of the main loop!)

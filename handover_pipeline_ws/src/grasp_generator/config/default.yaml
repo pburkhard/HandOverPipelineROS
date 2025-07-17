@@ -7,7 +7,7 @@ descriptor:
 
 generator:
   model: "dall-e-3"
-  quality: "hd" # Only available for DALL-E 3 (set it otherwise to null)
+  quality: "hd" # Only available for DALL-E 3
   size: "1024x1024" # Output image size (width x height), possible values: "1024x1024", "1024x1792", "1792x1024"
   style: "natural"  # "vivid" or "natural" (only available for DALL-E 3)
   background_prompt: "The background is a simple uniform wall."  # Will be merged into the image generation prompt

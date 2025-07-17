@@ -1,12 +1,12 @@
 ros:
   node_name: "motion_executor"  # Name of the ROS node
   subscribed_topics:
-    target_pose: "/target_gripper_pose"  # Contains the target base -> gripper transform
+    target_pose: "/target_gripper_pose"  # Contains the target transform from the gripper pose to the robot base frame
     trigger: "/start_motion"  # Trigger topic to start the motion execution
     measured_pose: "/cartesian_impedance_example_controller/measured_pose"  # Current pose of the gripper in 3D space
   published_topics:
-    target_pose: "/cartesian_impedance_example_controller/equilibrium_pose"  # Control the pose of the gripper in 3D space
-    marker: "motion_goal_marker"  # Contains the marker for visualization
+    target_pose: "/cartesian_impedance_example_controller/equilibrium_pose"  # Target pose of the gripper in 3D space used by the impedance controller
+    marker: "motion_goal_marker"  # Marker topic to visualize the target pose in RViz
   actions:
     gripper_control: "/franka_gripper/move/"  # Control the gripper itself
   services:
@@ -18,7 +18,7 @@ ros:
     camera: "camera_color_optical_frame"  # Frame ID for the camera
 
 phase_1_target_distance: 0.2 # Anticipated distance to the target pose after completing phase 1 (in meters)
-phase_2_rate: 20 # In Hz
+phase_2_rate: 20 # Update rate for the target pose in phase 2 (in Hz).
 
 phase_2_max_vel: 0.05 # Maximum allowed velocity in phase 2 (in meters per second). The robot is guaranteed to not exceed this velocity, but the actual velocity may be lower.
 phase_2_max_rot_vel: 0.3 # Maximum angular velocity in phase 2 (in radians per second). The robot is guaranteed to not exceed this velocity, but the actual velocity may be lower.

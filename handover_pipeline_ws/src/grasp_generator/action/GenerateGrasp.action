@@ -1,11 +1,11 @@
 # Goal
-sensor_msgs/Image object_image
-string object_description
-string task_description
+sensor_msgs/Image object_image  # Image containing the target object
+string object_description  # Name of the object, e.g. "wrench"
+string task_description  # Description of the intended task, e.g. "fasten a bolt"
 ---
 # Result
 bool success
-sensor_msgs/Image grasp_image
+sensor_msgs/Image grasp_image  # Synthetic image containing a hand grasping the given object
 ---
 # Feedback
 float32 percent_complete

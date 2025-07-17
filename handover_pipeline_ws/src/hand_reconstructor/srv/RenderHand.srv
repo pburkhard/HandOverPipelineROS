@@ -3,5 +3,5 @@ sensor_msgs/Image image  # Image containing the hand
 std_msgs/String estimation_dict  # Serialized JSON string of all hand estimator results
 ---
 # Response
-sensor_msgs/Image rendered_image  # Image containing the rendered hand
+sensor_msgs/Image rendered_image  # Image containing the rendered hand mesh
 bool success

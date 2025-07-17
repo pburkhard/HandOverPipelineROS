@@ -1,5 +1,5 @@
 # Request
-sensor_msgs/Image image
+sensor_msgs/Image image  # Image must contain a hand
 ---
 # Response
 sensor_msgs/CameraInfo camera_info # Estimated camera info

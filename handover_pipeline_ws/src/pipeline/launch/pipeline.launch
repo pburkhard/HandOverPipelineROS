@@ -3,10 +3,9 @@
     <arg name="python_path" value="$(arg pkg_path)/src/pipeline_node.py"/>
     <arg name="conda_env" value="pipeline"/>
     
-    <!-- Launch the node with updated conda environment activation -->
+    <!-- Launch the node in the correct conda environment -->
     <node name="pipeline" pkg="pipeline" type="activate_conda_env.sh" 
                 args="$(arg conda_env) $(arg python_path)" output="screen" respawn="false">
-        <param name="example_param" value="example_value"/>
         <env name="CONDA_PATH" value="$(env CONDA_PATH)" />
     </node>
 </launch>

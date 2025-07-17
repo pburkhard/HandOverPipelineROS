@@ -26,6 +26,7 @@ ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 class GraspGenerator:
+    """Action server for generating grasp images."""
 
     def __init__(self, cfg: DictConfig, api_key: str):
 

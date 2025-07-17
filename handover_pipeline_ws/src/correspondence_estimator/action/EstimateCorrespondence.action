@@ -1,12 +1,12 @@
 # Goal
 sensor_msgs/Image image_1
 sensor_msgs/Image image_2
-string object_description
+string object_description  # The object name for which the correspondence points should be estimated.
 ---
 # Result
 bool success
-std_msgs/Int32MultiArray points_1  # Corresponding points in image_1, shape (N,2)
-std_msgs/Int32MultiArray points_2  # Corresponding points in image_2, shape (N,2)
+std_msgs/Int32MultiArray points_1  # Corresponding points in image_1, shape (N,2).
+std_msgs/Int32MultiArray points_2  # Corresponding points in image_2, shape (N,2).
 ---
 # Feedback
 float32 percent_complete

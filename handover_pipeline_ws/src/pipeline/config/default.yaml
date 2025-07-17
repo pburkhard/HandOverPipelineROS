@@ -1,19 +1,18 @@
 ros:
   node_name: "handover_pipeline"  # Name of the ROS node
   subscribed_topics:
-    rgb_camera: "/camera/color/image_raw"  # Contains the rbgd image
-    depth_camera: "/camera/aligned_depth_to_color/image_raw"  # Contains the depth image
-    camera_info: "/camera/color/camera_info"  # Contains the camera info
-    task: "/task"  # Contains information about the object and the task to be performed
-    transform_selected_grasp_to_robot_cam: "/selected_grasp_marker"  # Contains the gripper pose in the robot camera frame
+    rgb_camera: "/camera/color/image_raw"  # Live RGB image
+    depth_camera: "/camera/aligned_depth_to_color/image_raw"  # Live depth image
+    camera_info: "/camera/color/camera_info"  # Camera info
+    task: "/task"  # Information about the object and the task to be performed
+    transform_selected_grasp_to_robot_cam: "/selected_grasp_marker"  # Gripper pose in the robot camera frame
   published_topics:
-    out_dir: "/out_dir"  # Contains the output directory path for saving results
-    target_gripper_pose: "/target_gripper_pose"  # Contains the target gripper pose in the robot base frame
-    marker: "/target_grasp_marker"  # Contains the marker for visualization
+    out_dir: "/out_dir"  # Output directory path for saving results
+    target_gripper_pose: "/target_gripper_pose"  # Target gripper pose in the robot base frame
+    marker: "/target_grasp_marker"  # Marker for visualizing the target gripper pose
   frame_ids:
     base: "panda_link0"  # Frame ID for the robot base
     camera: "camera_color_optical_frame"  # Frame ID for the camera
-    gripper: "selected_grasp"  # Frame ID for the gripper
 
 grasp_generator_client:
   server_name: "grasp_generator"  # Name of the ROS service to call
@@ -29,19 +28,19 @@ hand_reconstructor_client:
   services:
     reconstruct_hand: "reconstruct_hand"  # Service to reconstruct the hand from a given image
     reconstruct_hand_pose: "reconstruct_hand_pose"  # Service to reconstruct the hand pose from a given image
-    estimate_camera: "estimate_camera"  # Service to estimate the camera parameters
+    estimate_camera: "estimate_camera"  # Service to estimate the camera parameters from a given image
     render_hand: "render_hand"  # Service to render the reconstructed hand
 
 transform_estimator_client:
   actions:
-    estimate_transform: "estimate_transform"  # Service to estimate the transform between object and grasp image
-    estimate_transform_heuristic: "estimate_transform_heuristic"  # Service to estimate the transform using a heuristic method
+    estimate_transform: "estimate_transform"  # Service to estimate the transform between the robot camera frame and the (fictional) gen camera frame
+    estimate_transform_heuristic: "estimate_transform_heuristic"  # Service to estimate the transform from the hand pose to the robot camera frame using a heuristic method
   ros:
     timeout: 100  # Timeout for the service call in seconds
 
 # If true, run the correspondence estimator twice, once with the original object image and once with a mirrored version of the image.
-# The one with the lower mean squared error at the transform estimation will be used.
-try_mirrored_image: false
+# The one with the lower mean squared error for the transform estimation will be used.
+try_mirrored_image: true
 
 # Options for estimating the intrinsic matrix of the (virtual) gen camera.
 # Options:
@@ -50,7 +49,7 @@ try_mirrored_image: false
 # - "example_data": Load the camera intrinsics from the example data. This is as well the fallback option if the other ones cannot be used.
 camera_info_source: "robot_camera"
 
-# If true, the heuristic transform estimation will be used instead of solving the PnP problem. It is more robust, but less accurate.
+# If true, the heuristic transform estimation will be used instead of solving the PnP problem. This can be more robust in some cases, but is less accurate.
 use_heuristic_transform_estimation: false
 
 # If true, the translation of the hand pose extracted by the hand reconstructor will be overwritten by the measured value from the camera depth image.
@@ -64,31 +63,31 @@ debug:
   # All output data will be saved in a folder in this base directory.
   out_dir: "/Handover_Pipeline/outputs/"
   # Directory from which example data will be loaded.
-  example_dir: "/Handover_Pipeline/input/examples/02_hammer_real2"
+  example_dir: "/Handover_Pipeline/input/examples/09_wrench/"
   # If true, the configuration used for the pipeline will be logged.
   log_config: true
   # If true, intermediate results from the initialization phase will be saved to the output directory.
   log_init_results: true
-  # If true, the target hand pose will be rendered in the object image for visualization..
+  # If true, a rendering of the target hand pose will be saved to the output directory.
   visualize_target_hand_pose: true
   # If true, the camera topic will not be subscribed to, and example data will be used instead.
-  bypass_camera_subscriber: true
+  bypass_camera_subscriber: false
   # If true, the task topic will not be subscribed to, and example data will be used instead.
-  bypass_task_subscriber: true
+  bypass_task_subscriber: false
   # If true, the grasp generator will not be called, and example data will be used instead.
-  bypass_grasp_generator: true
+  bypass_grasp_generator: false
   # If true, the correspondence estimator will not be called, and example data will be used instead.
-  bypass_correspondence_estimator: true
+  bypass_correspondence_estimator: false
   # If true, the hand reconstructor will not be called, and example data will be used instead.
-  bypass_hand_reconstructor: true
-  # If true, the grasp -> object transform estimator will not be called, and example data will be used instead.
-  bypass_transform_estimator: true
-  # If true, the object -> gripper transform subscriber will not be used, and example data will be used instead.
-  bypass_transform_subscriber: true
-  # If true, the transform from selected grasp to hand pose will be loaded from a file and overwrites the one calculated during the initialization phase. 
+  bypass_hand_reconstructor: false
+  # If true, the transform estimator will not be called, and example data will be used instead.
+  bypass_transform_estimator: false
+  # If true, the (gripper -> robot camera frame) transform subscriber will not be used, and example data will be used instead.
+  bypass_transform_subscriber: false
+  # If true, the (gripper -> robot camera frame) transform will be loaded from a file and overwrites the one calculated during the initialization phase.
   load_init_results_from_file: false
   # If true, the node will directly run the main loop without going through the initialization phase
-  skip_initaization_phase: false
+  skip_initialization_phase: false
   # If true, the node will just run the initialization phase and exit.
   skip_main_loop: false
   # If true, the target pose is set equal to the hand pose, effectively ignoring the transform calculated during the initialization phase.
@@ -97,5 +96,5 @@ debug:
   use_hand_position_as_target: false
   # If true, the main loop will publish a marker additional to the target transform for visualization.
   publish_marker: true
-  # If true, verbose information will be logged during the main loop execution.
+  # If true, verbose information will be printed out during execution.
   log_verbose: true

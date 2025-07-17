@@ -1,6 +1,6 @@
 # Goal
-sensor_msgs/CameraInfo object_camera_info  # Camera info for the object image
-sensor_msgs/CameraInfo grasp_camera_info  # Camera info for the grasp image
+sensor_msgs/CameraInfo object_camera_info  # Camera info for the object image (containing the real object)
+sensor_msgs/CameraInfo grasp_camera_info  # (Estimated) camera info for the grasp image (containing the generated object)
 sensor_msgs/Image object_image_depth  # Depth image of the object
 std_msgs/Int32MultiArray corr_points_object  # Corresponding points in the object image, shape (N,2)
 std_msgs/Int32MultiArray corr_points_grasp  # Corresponding points in the grasp image, shape (N,2)
@@ -9,7 +9,7 @@ std_msgs/Int32MultiArray corr_points_grasp  # Corresponding points in the grasp 
 bool success
 std_msgs/Float32 mse  # mean squared error between the transformed grasp points and the object points. Indicates the quality of the matching
 geometry_msgs/Transform transform_robot_cam_to_gen_cam  # Transform from robot camera frame (or object camera frame) to gen camera frame (or grasp camera frame)
-sensor_msgs/CameraInfo grasp_camera_info  # Camera info for the grasp image with optimized focal length
+sensor_msgs/CameraInfo grasp_camera_info  # Camera info for the grasp image with optimized focal length. This is a legacy attribute and isn't used anymore
 ---
 # Feedback
 float32 percent_complete
